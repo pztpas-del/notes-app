@@ -65,6 +65,7 @@ export class Vault {
     this.saveTimer = null;
     this.idx = null;
     this.urls = new Map(); // path -> { content, url } object URLs for attachments
+    this.media = null;     // MediaStore: pictures and files on Yandex Disk
   }
 
   async load() {
@@ -82,7 +83,16 @@ export class Vault {
     const low = path.toLowerCase();
     return this.notes().find(n => n.path.toLowerCase() === low)?.path || null;
   }
-  attachments() { return [...this.files.values()].filter(f => !f.deleted && !isText(f.path)); }
+  // Old-style attachments stored in GitHub (before Yandex Disk); moved over on connect.
+  legacyAttachments() { return [...this.files.values()].filter(f => !f.deleted && !isText(f.path)); }
+  // Every picture and file, wherever it is kept: [{ path, size, dirty, legacy }]
+  attachments() {
+    const out = new Map();
+    for (const f of this.legacyAttachments()) out.set(f.path, { path: f.path, size: Math.round(f.content.length * 0.75), dirty: Boolean(f.dirty), legacy: true });
+    if (this.media) for (const m of this.media.list()) if (!out.has(m.path)) out.set(m.path, { ...m, legacy: false });
+    return [...out.values()];
+  }
+  hasFile(path) { return Boolean(this.get(path)) || Boolean(this.media && this.media.has(path)); }
 
   // ---------- Flowchart ----------
   schema() {
@@ -119,6 +129,7 @@ export class Vault {
   }
   uniquePath(dir, name, ext = '.md') {
     const taken = new Set([...this.files.values()].filter(f => !f.deleted).map(f => f.path.toLowerCase()));
+    if (this.media) for (const p of this.media.paths()) taken.add(p.toLowerCase());
     for (let i = 1; ; i++) {
       const p = (dir ? dir + '/' : '') + name + (i > 1 ? ' ' + i : '') + ext;
       if (!taken.has(p.toLowerCase())) return p;
@@ -137,7 +148,8 @@ export class Vault {
   fileUrl(name) {
     const path = this.resolveFile(name);
     if (!path) return null;
-    const f = this.files.get(path);
+    const f = this.get(path);
+    if (!f) return this.media ? this.media.url(path) : null;
     const cached = this.urls.get(path);
     if (cached && cached.content === f.content) return cached.url;
     if (cached) URL.revokeObjectURL(cached.url);

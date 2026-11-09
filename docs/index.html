@@ -97,6 +97,14 @@
           </div>
           <p id="settingsMsg" class="form-msg" role="status"></p>
         </form>
+        <h2>Картинки и файлы — Яндекс Диск</h2>
+        <p class="muted">Картинки, видео и файлы из заметок хранятся на вашем Яндекс Диске, в папке «Приложения/Заметки». На устройство они скачиваются, только когда вы их открываете. Программа видит только эту папку, остальной Диск ей недоступен.</p>
+        <p id="yaStatus" class="form-msg" role="status"></p>
+        <div class="row">
+          <button type="button" id="yaConnect" class="primary">Подключить Яндекс Диск</button>
+          <button type="button" id="yaMove" hidden>Перенести файлы на Диск</button>
+          <button type="button" id="yaDisconnect" class="danger-text" hidden>Отключить на этом устройстве</button>
+        </div>
         <h2>Где взять токен</h2>
         <ol class="steps">
           <li>Создайте на GitHub закрытое хранилище для заметок и при создании отметьте <b>Add a README file</b>.</li>

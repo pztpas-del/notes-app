@@ -4,6 +4,8 @@ import { GraphView } from './graph.js';
 import { GitHubSync } from './sync.js';
 import { createEditor } from './editor.js';
 import { SchemaView } from './schema.js';
+import { YaDisk } from './yadisk.js';
+import { MediaStore } from './media.js';
 
 const $ = id => document.getElementById(id);
 const prefs = {
@@ -21,6 +23,11 @@ const plural = (n, one, few, many) => {
 const vault = new Vault();
 let settings = prefs.get('sync', {});
 const sync = new GitHubSync(vault, () => settings);
+// Pictures and files live on Yandex Disk and come down only when shown.
+const ya = new YaDisk();
+const media = new MediaStore(ya, () => vault.changed());
+vault.media = media;
+let yaState = { error: '', info: null, moving: false };
 let current = null;
 let currentFile = null;
 let mode = prefs.get('mode', 'edit');
@@ -76,7 +83,7 @@ function route() {
     else showEmpty('Такой заметки нет на этом устройстве. Возможно, она ещё не пришла с GitHub.');
   } else if (h.startsWith('#file=')) {
     const p = decodeURIComponent(h.slice(6));
-    if (vault.get(p)) showFile(p);
+    if (vault.hasFile(p)) showFile(p);
     else showEmpty('Такого файла нет на этом устройстве. Возможно, он ещё не пришёл с GitHub.');
   } else if (h === '#graph') showGraph();
   else if (h === '#schema' || h.startsWith('#schema=')) showSchema(h.startsWith('#schema=') ? decodeURIComponent(h.slice(8)) : null);
@@ -173,7 +180,7 @@ function setMode(next, focus = true) {
 let linkSig = '';
 function vaultSignature() {
   return vault.notes().map(n => n.path).sort().join('\n') + '\n|\n' +
-    vault.attachments().map(f => f.path + ':' + f.content.length).sort().join('\n');
+    vault.attachments().map(f => f.path + ':' + f.size).sort().join('\n') + '\n' + media.version;
 }
 
 // ---------- Attachments ----------
@@ -223,28 +230,43 @@ async function saveFiles(files) {
       stem = (file.type.startsWith('image/') ? 'Изображение ' : 'Файл ') + stamp();
     }
     const path = vault.uniquePath(ATTACH_DIR, stem, '.' + ext);
-    vault.writeFile(path, await blobToBase64(blob));
+    await media.put(path, blob);
     const twin = vault.attachments().some(f => f.path !== path && filename(f.path).toLowerCase() === filename(path).toLowerCase());
     out.push(`![[${twin ? path : filename(path)}]]`);
   }
-  if (out.length) scheduleSync();
+  if (out.length) {
+    scheduleSync();
+    if (!ya.connected()) toast('Файлы сохранены на этом устройстве. Подключите Яндекс Диск в настройках, чтобы они загрузились туда и появились на других устройствах.', 9000);
+  }
   return out;
+}
+
+let fileViewUrl = null;
+function refreshFileView() {
+  // The file finished downloading: put it on screen.
+  if (vault.fileUrl(currentFile) !== fileViewUrl) showFile(currentFile);
 }
 
 function showFile(path) {
   showView('fileView', dirname(path).split('/').join(' / '));
   currentFile = path;
-  const f = vault.get(path);
+  const info = vault.attachments().find(a => a.path === path) || { size: 0, legacy: true };
   const box = $('fileBody');
   const url = vault.fileUrl(path);
-  const size = Math.round(f.content.length * 0.75 / 1024);
+  fileViewUrl = url;
+  const size = Math.round(info.size / 1024);
   const name = filename(path);
+  const where = info.legacy ? 'в GitHub, ещё не перенесён на Яндекс Диск' : info.dirty ? 'ждёт загрузки на Яндекс Диск' : 'на Яндекс Диске';
   const using = vault.notes().filter(n => n.content.includes(name)).map(n => n.path);
   box.replaceChildren(
     el('h1', { className: 'file-title', textContent: name }),
-    el('p', { className: 'muted', textContent: `${size > 1024 ? (size / 1024).toFixed(1) + ' МБ' : size + ' КБ'} · ${path}` }));
-  if (IMAGE_RE.test(path)) box.append(el('img', { className: 'file-preview', src: url, alt: name }));
-  else box.append(el('p', {}, el('a', { href: url, target: '_blank', rel: 'noopener', textContent: 'Открыть файл' })));
+    el('p', { className: 'muted', textContent: `${size > 1024 ? (size / 1024).toFixed(1) + ' МБ' : size + ' КБ'} · ${where}` }));
+  const ready = url && !url.startsWith('data:');
+  if (IMAGE_RE.test(path)) box.append(el('img', { className: 'file-preview', src: url || '', alt: name }));
+  else if (/\.(mp4|webm)$/i.test(path) && ready) box.append(el('video', { className: 'file-preview', src: url, controls: true }));
+  else if (/\.(mp3|m4a|ogg|wav)$/i.test(path) && ready) box.append(el('audio', { src: url, controls: true }));
+  else if (ready) box.append(el('p', {}, el('a', { href: url, target: '_blank', rel: 'noopener', textContent: 'Открыть файл' })));
+  else box.append(el('p', { className: 'muted', textContent: url ? 'Файл загружается с Яндекс Диска…' : 'Файл недоступен.' }));
   if (using.length) {
     const list = el('div', { className: 'backlinks' }, el('h2', { textContent: 'Используется в заметках' }));
     for (const p of using) {
@@ -258,9 +280,16 @@ function showFile(path) {
   const del = el('button', { type: 'button', className: 'danger-text', textContent: 'Удалить файл' });
   del.addEventListener('click', () => {
     actions.replaceChildren(
-      el('span', { textContent: using.length ? `Файл используется в заметках (${using.length}). Удалить всё равно?` : 'Удалить файл? После синхронизации он удалится и на других устройствах.' }),
+      el('span', { textContent: using.length ? `Файл используется в заметках (${using.length}). Удалить всё равно?` : 'Удалить файл? Он пропадёт на всех устройствах, а на Яндекс Диске попадёт в корзину.' }),
       Object.assign(el('button', { type: 'button', className: 'danger-text', textContent: 'Удалить' }), {
-        onclick: () => { vault.remove(path); toast(`Файл «${name}» удалён`); scheduleSync(); history.back(); },
+        onclick: async () => {
+          try {
+            if (info.legacy) vault.remove(path); else await media.remove(path);
+            toast(`Файл «${name}» удалён. На Яндекс Диске он лежит в корзине.`);
+            scheduleSync();
+            history.back();
+          } catch (e) { toast(e.message, 7000); }
+        },
       }),
       Object.assign(el('button', { type: 'button', textContent: 'Отмена' }), { onclick: () => showFile(path) }));
   });
@@ -541,12 +570,13 @@ function scheduleSync(delay = 8000) {
 
 async function runSync() {
   clearTimeout(syncTimer);
-  if (!sync.configured() || !navigator.onLine) { renderSyncStatus(); return null; }
+  if (!sync.configured() || !navigator.onLine) { renderSyncStatus(); syncMedia(); return null; }
   syncState = { ...syncState, state: 'syncing' };
   renderSyncStatus();
   try {
     const r = await sync.sync();
     syncState = { state: 'ok', at: new Date(), error: '' };
+    syncMedia();
     if (r.conflicts.length) {
       toast(`Заметку изменили и здесь, и на другом устройстве. Версия с другого устройства сохранена рядом: ${r.conflicts.map(basename).join(', ')}`, 10000);
     }
@@ -560,6 +590,69 @@ async function runSync() {
   }
 }
 
+// Uploads waiting pictures and files, refreshes the list of files on the Disk.
+async function syncMedia() {
+  if (!ya.connected() || !navigator.onLine) { renderYa(); return; }
+  try {
+    await media.flush();
+    await media.refresh(ATTACH_DIR);
+    yaState.error = '';
+  } catch (e) {
+    yaState.error = e.message || String(e);
+  }
+  renderYa();
+  renderSyncStatus();
+}
+
+// Moves pictures and files that were stored in GitHub over to the Disk.
+async function moveLegacyToDisk() {
+  const legacy = vault.legacyAttachments();
+  if (!legacy.length || !ya.connected() || yaState.moving) return;
+  yaState.moving = true;
+  renderYa();
+  let moved = 0;
+  try {
+    for (const f of legacy) {
+      const bin = atob(f.content);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      await media.put(f.path, new Blob([bytes], { type: 'application/octet-stream' }));
+      await media.flush();
+      if (media.remote.has(f.path)) { vault.remove(f.path); moved++; }
+      if ($('yaStatus')) $('yaStatus').textContent = `Переношу файлы на Яндекс Диск: ${moved} из ${legacy.length}…`;
+    }
+    toast(`Перенесено на Яндекс Диск: ${moved} ${plural(moved, 'файл', 'файла', 'файлов')}.`);
+    scheduleSync(2000);
+  } catch (e) {
+    yaState.error = e.message || String(e);
+  } finally {
+    yaState.moving = false;
+    renderYa();
+  }
+}
+
+function renderYa() {
+  if (!$('yaStatus')) return;
+  const waiting = media.pendingCount();
+  const legacy = vault.legacyAttachments().length;
+  let text;
+  if (!ya.connected()) text = 'Не подключён. Новые картинки и файлы пока хранятся только на этом устройстве и загрузятся на Диск после подключения.';
+  else if (yaState.moving) text = 'Переношу файлы на Яндекс Диск…';
+  else {
+    text = 'Подключён. Файлы лежат на Диске в папке «Приложения/Заметки».';
+    const i = yaState.info;
+    if (i && i.total_space) text += ` Занято ${(i.used_space / 2 ** 30).toFixed(1)} ГБ из ${(i.total_space / 2 ** 30).toFixed(1)} ГБ.`;
+  }
+  if (waiting) text += ` Ждут загрузки: ${waiting}.`;
+  if (yaState.error) text += ' ' + yaState.error;
+  $('yaStatus').textContent = text;
+  $('yaStatus').className = 'form-msg' + (yaState.error ? ' bad' : '');
+  $('yaConnect').hidden = ya.connected();
+  $('yaDisconnect').hidden = !ya.connected();
+  $('yaMove').hidden = !ya.connected() || !legacy || yaState.moving;
+  $('yaMove').textContent = `Перенести на Диск файлы из GitHub (${legacy})`;
+}
+
 function renderSyncStatus() {
   const b = $('syncStatus');
   const pending = vault.pendingCount();
@@ -571,6 +664,8 @@ function renderSyncStatus() {
   else if (syncState.at) text = 'Синхронизировано в ' + syncState.at.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
   else text = 'Ждёт синхронизации';
   if (pending && sync.configured() && state !== 'syncing') text += ` · не отправлено: ${pending}`;
+  const waiting = media.pendingCount();
+  if (waiting) text += ` · файлов ждёт загрузки: ${waiting}`;
   b.dataset.state = state;
   b.textContent = text;
   b.title = syncState.error || 'Открыть настройки синхронизации';
@@ -587,6 +682,8 @@ function showSettings() {
   const msg = $('settingsMsg');
   if (syncState.state === 'error') { msg.textContent = syncState.error; msg.className = 'form-msg bad'; }
   else { msg.textContent = sync.configured() ? 'Синхронизация включена.' : ''; msg.className = 'form-msg'; }
+  renderYa();
+  if (ya.connected()) ya.info().then(i => { yaState.info = i; renderYa(); }).catch(() => {});
 }
 
 function readForm() {
@@ -651,7 +748,8 @@ vault.onChange(() => {
       if (!vault.get(current)) route();
       else renderNote();
     }
-    if (currentFile && !vault.get(currentFile)) route();
+    if (currentFile && !vault.hasFile(currentFile)) route();
+    else if (currentFile) refreshFileView();
     if (!$('graphView').hidden && graph) updateGraph();
     if (schema) schema.refresh();
     if (current) renderPanel();
@@ -722,6 +820,9 @@ function bind() {
     $('settingsMsg').textContent = 'Синхронизирую…'; $('settingsMsg').className = 'form-msg';
     syncAndReport();
   });
+  $('yaConnect').addEventListener('click', () => ya.startLogin());
+  $('yaDisconnect').addEventListener('click', () => { ya.disconnect(); yaState = { error: '', info: null, moving: false }; renderYa(); toast('Яндекс Диск отключён на этом устройстве. Файлы на Диске остались.'); });
+  $('yaMove').addEventListener('click', () => moveLegacyToDisk());
   $('disconnect').addEventListener('click', () => {
     settings = {}; prefs.set('sync', {});
     syncState = { state: 'idle', at: null, error: '' };
@@ -775,14 +876,20 @@ function bind() {
 }
 
 async function init() {
+  const yaBack = ya.takeTokenFromUrl();
   bind();
   try {
     await vault.load();
+    await media.init();
   } catch {
     toast('Браузер не дал сохранять заметки на этом устройстве. Проверьте, что сайту разрешено хранить данные.', 10000);
   }
   route();
   renderSyncStatus();
+  if (yaBack === 'ok') {
+    toast('Яндекс Диск подключён. Картинки и файлы будут храниться там.', 7000);
+    syncMedia().then(() => moveLegacyToDisk());
+  } else if (yaBack === 'denied') toast('Доступ к Яндекс Диску не выдан.', 7000);
   runSync();
   setInterval(() => { if (document.visibilityState === 'visible') runSync(); }, 60000);
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
