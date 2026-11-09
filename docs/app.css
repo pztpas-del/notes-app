@@ -465,6 +465,17 @@ button:active:not(:disabled) { transform: scale(.97); }
 
 /* "repeating event" button and its menu */
 .cal-repeat-btn { white-space: nowrap; }
+/* "+ Событие" and "↻ Повторяющееся" always stay side by side. */
+.cal-create { display: inline-flex; gap: 6px; flex: none; }
+.cal-search { width: 150px; }
+/* Medium screens: search hides behind 🔍 so the toolbar fits in one row. */
+@media (max-width: 1599px) {
+  .cal-search { display: none; }
+  .cal-search-btn { display: inline-block !important; margin-left: auto; }
+  .cal-toolbar.searching .cal-search { display: block; }
+}
+.side-create { display: grid; gap: 6px; }
+.side-create button { padding: 8px 12px; font-size: 14px; border-radius: 12px; text-align: left; }
 .cal-menu { position: absolute; z-index: 35; min-width: 230px; background: var(--bg); border: 1px solid var(--border); border-radius: 14px; padding: 6px; box-shadow: 0 12px 34px rgb(0 0 0 / .26); display: grid; gap: 2px; animation: pop-in .16s var(--ease); }
 .cal-menu-head { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); padding: 6px 10px 4px; }
 .cal-menu button { border: 0; background: transparent; text-align: left; padding: 9px 12px; border-radius: 10px; font-size: 14.5px; }
@@ -503,6 +514,7 @@ button:active:not(:disabled) { transform: scale(.97); }
   .cal-toolbar button { padding: 4px 9px; font-size: 13.5px; }
   .cal-title { margin: 0 2px; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .cal-search { display: none; }
+  .cal-create { display: contents; }
   .cal-views { order: 4; }
   .cal-todo-btn { order: 5; }
   .cal-search-btn { display: inline-block; order: 3; }

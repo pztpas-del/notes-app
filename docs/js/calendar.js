@@ -65,7 +65,7 @@ export class CalendarView {
     this.root.append(this.side, main, this.todoPane, this.backdrop, this.menu, this.pop, this.modal);
     this.root.classList.toggle('todo-open', Boolean(this.todoOpen));
     this.root.addEventListener('pointerdown', e => {
-      if (!this.menu.hidden && !e.target.closest('.cal-menu, .cal-repeat-btn')) this.menu.hidden = true;
+      if (!this.menu.hidden && !e.target.closest('.cal-menu, .cal-repeat-btn, .cal-repeat-side')) this.menu.hidden = true;
       if (!this.pop.hidden && !e.target.closest('.cal-pop, .ev-block, .ev-chip')) this.closePop();
       if (!this.results.hidden && !e.target.closest('.cal-results, .cal-search')) this.results.hidden = true;
     });
@@ -124,6 +124,7 @@ export class CalendarView {
     const start = this.defaultStart();
     const item = (text, repeat, allDay = false) => btn(text, () => {
       this.menu.hidden = true;
+      this.setSide(false);
       this.newEvent(allDay ? startOfDay(start) : start, { allDay, repeat });
     });
     rc(this.menu,
@@ -203,8 +204,9 @@ export class CalendarView {
       searchBtn,
       search,
       btn(todoCount ? `Дела · ${todoCount}` : 'Дела', () => this.setTodo(!this.todoOpen), 'cal-todo-btn' + (this.todoOpen ? ' on' : '')),
-      repeatBtn,
-      btn('+ Событие', () => this.newEvent(this.defaultStart()), 'primary'),
+      el('span', { className: 'cal-create' },
+        btn('+ Событие', () => this.newEvent(this.defaultStart()), 'primary'),
+        repeatBtn),
     );
   }
 
@@ -244,8 +246,12 @@ export class CalendarView {
     }
     const importInput = el('input', { type: 'file', accept: '.ics,text/calendar', hidden: true });
     importInput.addEventListener('change', () => this.importIcs(importInput));
+    const sideRepeat = btn('↻ Повторяющееся событие', () => this.openRepeatMenu(sideRepeat), 'cal-repeat-side');
     rc(this.side,
       el('div', { className: 'cal-side-top' }, el('b', { textContent: 'Календарь' }), btn('✕', () => this.setSide(false), 'icon-text', 'Закрыть')),
+      el('div', { className: 'side-create' },
+        btn('+ Новое событие', () => { this.setSide(false); this.newEvent(this.defaultStart()); }, 'primary'),
+        sideRepeat),
       el('div', { className: 'mini' },
         el('div', { className: 'mini-head' },
           btn('‹', () => { this.miniMonth = new Date(mm.getFullYear(), mm.getMonth() - 1, 1); this.renderSide(); }, 'icon-text'),
