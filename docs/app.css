@@ -463,8 +463,22 @@ button:active:not(:disabled) { transform: scale(.97); }
 .todo-add { border: 1px dashed var(--border); background: transparent; border-radius: 10px; padding: 6px 8px; font-size: 14px; min-width: 0; }
 .todo-newlist { align-self: flex-start; }
 
+/* "repeating event" button and its menu */
+.cal-repeat-btn { white-space: nowrap; }
+.cal-menu { position: absolute; z-index: 35; min-width: 230px; background: var(--bg); border: 1px solid var(--border); border-radius: 14px; padding: 6px; box-shadow: 0 12px 34px rgb(0 0 0 / .26); display: grid; gap: 2px; animation: pop-in .16s var(--ease); }
+.cal-menu-head { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); padding: 6px 10px 4px; }
+.cal-menu button { border: 0; background: transparent; text-align: left; padding: 9px 12px; border-radius: 10px; font-size: 14.5px; }
+.cal-menu button:hover { background: var(--surface); }
+.cal-side-top { display: none; align-items: center; justify-content: space-between; }
+.cal-search-btn { display: none; }
+.cal-backdrop { display: none; }
+
 @media (max-width: 1000px) {
   .calendar-view { grid-template-columns: minmax(0, 1fr) auto; }
+  .cal-side-top { display: flex; }
+  .cal-side-top .icon-text { font-size: 18px; padding: 4px 10px; }
+  .cal-backdrop { position: absolute; inset: 0; z-index: 23; background: rgb(0 0 0 / .3); animation: fade .2s var(--ease); }
+  .calendar-view.side-open .cal-backdrop, .calendar-view.todo-open .cal-backdrop { display: block; }
   .cal-side { position: absolute; z-index: 25; left: 0; top: 0; bottom: 0; width: 250px; transform: translateX(-104%); transition: transform .3s var(--ease); box-shadow: 0 0 30px rgb(0 0 0 / .25); }
   .calendar-view.side-open .cal-side { transform: none; }
   .cal-side-btn { display: inline-block; }
@@ -484,5 +498,23 @@ button:active:not(:disabled) { transform: scale(.97); }
 .cal-todo .rp-tabs button { padding: 4px 8px; font-size: 13px; }
 .todo-item .todo-due { width: 104px; }
 @media (max-width: 640px) {
+  /* Phone: a compact toolbar so the day/week grid gets most of the screen. */
+  .cal-toolbar { padding: 6px 8px; gap: 4px; }
+  .cal-toolbar button { padding: 4px 9px; font-size: 13.5px; }
+  .cal-title { margin: 0 2px; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .cal-search { display: none; }
+  .cal-views { order: 4; }
+  .cal-todo-btn { order: 5; }
+  .cal-search-btn { display: inline-block; order: 3; }
+  .cal-toolbar.searching .cal-search { display: block; }
+  .day-head { padding: 3px 0; }
+  .day-head b { font-size: 16px; width: 28px; height: 28px; }
+  .cal-allday { max-height: 72px; }
+  .cal-grid { grid-template-columns: 40px repeat(var(--days, 7), minmax(0, 1fr)) !important; }
+  .cal-grid-head, .cal-allday { grid-template-columns: 40px repeat(var(--days, 7), minmax(0, 1fr)) !important; }
+  .hour-label { font-size: 10px; right: 4px; }
+  .ev-block { padding: 2px 4px; font-size: 11.5px; }
+  .cal-repeat-btn { position: absolute; right: 16px; bottom: calc(68px + env(safe-area-inset-bottom, 0px)); z-index: 15; border-radius: 22px; padding: 9px 14px !important; font-size: 14px !important; background: var(--bg); box-shadow: 0 8px 24px rgb(0 0 0 / .25); }
+  .cal-scroll { padding-bottom: 120px; }
   .cal-toolbar .primary { position: absolute; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 15; border-radius: 22px; padding: 11px 18px; font-size: 15px; box-shadow: 0 8px 24px rgb(0 0 0 / .3); }
 }

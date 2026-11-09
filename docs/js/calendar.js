@@ -57,14 +57,21 @@ export class CalendarView {
     this.modal = el('div', { className: 'cal-modal', hidden: true });
     this.modal.addEventListener('pointerdown', e => { if (e.target === this.modal) this.closeModal(); });
     const main = el('div', { className: 'cal-main' }, this.toolbar, this.results, this.body);
-    this.root.append(this.side, main, this.todoPane, this.pop, this.modal);
+    // On narrow screens the side panel and to-dos slide over the grid; a tap on
+    // the dimmed area around them closes them.
+    this.backdrop = el('div', { className: 'cal-backdrop' });
+    this.backdrop.addEventListener('click', () => { this.setSide(false); this.setTodo(false); });
+    this.menu = el('div', { className: 'cal-menu', hidden: true });
+    this.root.append(this.side, main, this.todoPane, this.backdrop, this.menu, this.pop, this.modal);
+    this.root.classList.toggle('todo-open', Boolean(this.todoOpen));
     this.root.addEventListener('pointerdown', e => {
+      if (!this.menu.hidden && !e.target.closest('.cal-menu, .cal-repeat-btn')) this.menu.hidden = true;
       if (!this.pop.hidden && !e.target.closest('.cal-pop, .ev-block, .ev-chip')) this.closePop();
       if (!this.results.hidden && !e.target.closest('.cal-results, .cal-search')) this.results.hidden = true;
     });
     document.addEventListener('keydown', e => {
       if (!this.visible) return;
-      if (e.key === 'Escape') { if (!this.modal.hidden) this.closeModal(); else this.closePop(); }
+      if (e.key === 'Escape') { if (!this.modal.hidden) this.closeModal(); else if (!this.menu.hidden) this.menu.hidden = true; else if (this.sideOpen) this.setSide(false); else this.closePop(); }
       if (e.target.closest('input, textarea, select, [contenteditable="true"]')) return;
       if (e.key === 't' || e.key === 'е') this.go(new Date());
       if (e.key === 'ArrowLeft' && this.modal.hidden) this.step(-1);
@@ -101,6 +108,38 @@ export class CalendarView {
     this.render();
   }
   setView(v) { this.view = v; prefsSet('view', v); this.render(); }
+  setSide(open) { this.sideOpen = open; this.root.classList.toggle('side-open', open); }
+  setTodo(open) {
+    if (this.todoOpen === open) return;
+    this.todoOpen = open; prefsSet('todoOpen', open);
+    this.todoPane.hidden = !open;
+    this.root.classList.toggle('todo-open', open);
+    this.toolbar.querySelector('.cal-todo-btn')?.classList.toggle('on', open);
+    this.renderTodos();
+  }
+
+  // Menu of the "repeating event" button: a new event that repeats every day, week, month or year.
+  openRepeatMenu(anchor) {
+    if (!this.menu.hidden) { this.menu.hidden = true; return; }
+    const start = this.defaultStart();
+    const item = (text, repeat, allDay = false) => btn(text, () => {
+      this.menu.hidden = true;
+      this.newEvent(allDay ? startOfDay(start) : start, { allDay, repeat });
+    });
+    rc(this.menu,
+      el('div', { className: 'cal-menu-head', textContent: 'Повторяющееся событие' }),
+      item('Каждый день', { freq: 'day', interval: 1 }),
+      item(`Каждую неделю (${WD_LONG[isoDow(start) - 1]})`, { freq: 'week', interval: 1, byDay: [isoDow(start)] }),
+      item(`Каждый месяц (${start.getDate()}-го)`, { freq: 'month', interval: 1, monthMode: 'date' }),
+      item(`Каждый год (${start.getDate()} ${MONTHS_GEN[start.getMonth()]})`, { freq: 'year', interval: 1 }, true));
+    const box = anchor.getBoundingClientRect(), host = this.root.getBoundingClientRect();
+    this.menu.hidden = false;
+    const w = this.menu.offsetWidth, h = this.menu.offsetHeight;
+    const left = Math.max(8, Math.min(box.left - host.left, host.width - w - 8));
+    const below = box.bottom - host.top + 6;
+    this.menu.style.left = left + 'px';
+    this.menu.style.top = (below + h > host.height - 8 ? Math.max(8, box.top - host.top - h - 6) : below) + 'px';
+  }
 
   weekStart(d) {
     const ws = this.store.conf().settings.weekStart === 7 ? 7 : 1;
@@ -147,15 +186,24 @@ export class CalendarView {
     search.addEventListener('input', () => { this.query = search.value; this.renderResults(); });
     search.addEventListener('focus', () => { if (this.query) this.renderResults(); });
     const todoCount = this.store.todos().items.filter(i => !i.done && i.due && i.due <= dkey(new Date())).length;
-    rc(this.toolbar, 
-      btn('☰', () => { this.sideOpen = !this.sideOpen; this.root.classList.toggle('side-open', this.sideOpen); }, 'icon-text cal-side-btn', 'Календари и мини-календарь'),
+    const searchBtn = btn('🔍', () => {
+      const on = !this.toolbar.classList.contains('searching');
+      this.toolbar.classList.toggle('searching', on);
+      if (on) search.focus(); else { search.value = ''; this.query = ''; this.results.hidden = true; }
+    }, 'icon-text cal-search-btn', 'Найти событие');
+    if (this.query) this.toolbar.classList.add('searching');
+    const repeatBtn = btn('↻ Повторяющееся', () => this.openRepeatMenu(repeatBtn), 'cal-repeat-btn', 'Событие, которое повторяется каждый день, неделю, месяц или год');
+    rc(this.toolbar,
+      btn('☰', () => this.setSide(!this.sideOpen), 'icon-text cal-side-btn', 'Календари и мини-календарь'),
       btn('Сегодня', () => this.go(new Date())),
       btn('‹', () => this.step(-1), 'icon-text', 'Назад'),
       btn('›', () => this.step(1), 'icon-text', 'Вперёд'),
       el('h1', { className: 'cal-title', textContent: title }),
       views,
+      searchBtn,
       search,
-      btn(todoCount ? `Дела · ${todoCount}` : 'Дела', () => { this.todoOpen = !this.todoOpen; prefsSet('todoOpen', this.todoOpen); this.todoPane.hidden = !this.todoOpen; this.renderTodos(); }, 'cal-todo-btn' + (this.todoOpen ? ' on' : '')),
+      btn(todoCount ? `Дела · ${todoCount}` : 'Дела', () => this.setTodo(!this.todoOpen), 'cal-todo-btn' + (this.todoOpen ? ' on' : '')),
+      repeatBtn,
       btn('+ Событие', () => this.newEvent(this.defaultStart()), 'primary'),
     );
   }
@@ -179,7 +227,7 @@ export class CalendarView {
     const busy = new Set(this.store.occurrences(ws, addDays(ws, 42)).map(o => dkey(o.start)));
     for (let i = 0; i < 42; i++) {
       const d = addDays(ws, i);
-      const b = btn(String(d.getDate()), () => { this.go(d); this.sideOpen = false; this.root.classList.remove('side-open'); },
+      const b = btn(String(d.getDate()), () => { this.go(d); this.setSide(false); },
         'mini-day' + (d.getMonth() !== mm.getMonth() ? ' other' : '') + (sameDay(d, new Date()) ? ' today' : '') +
         ((this.view === 'week' || this.view === 'day') && vis.has(dkey(d)) ? ' in-view' : '') + (busy.has(dkey(d)) ? ' busy' : '') +
         (conf.settings.holidays && holiday(d) || isoDow(d) >= 6 ? ' off' : ''));
@@ -196,7 +244,8 @@ export class CalendarView {
     }
     const importInput = el('input', { type: 'file', accept: '.ics,text/calendar', hidden: true });
     importInput.addEventListener('change', () => this.importIcs(importInput));
-    rc(this.side, 
+    rc(this.side,
+      el('div', { className: 'cal-side-top' }, el('b', { textContent: 'Календарь' }), btn('✕', () => this.setSide(false), 'icon-text', 'Закрыть')),
       el('div', { className: 'mini' },
         el('div', { className: 'mini-head' },
           btn('‹', () => { this.miniMonth = new Date(mm.getFullYear(), mm.getMonth() - 1, 1); this.renderSide(); }, 'icon-text'),
@@ -255,7 +304,7 @@ export class CalendarView {
       body.append(col);
     }
     const scroller = el('div', { className: 'cal-scroll' }, body);
-    rc(this.body, el('div', { className: 'cal-week' }, head, allday, scroller));
+    rc(this.body, el('div', { className: 'cal-week', style: { '--days': days.length } }, head, allday, scroller));
     this.bindGrid(body);
     this.drawNowLine();
     const target = this.scrollTop ?? Math.max(0, (Math.min(workStart, new Date().getHours()) - 1) * HOUR);
@@ -352,7 +401,9 @@ export class CalendarView {
     const end = e => {
       const g = this.gesture;
       this.gesture = null;
-      if (!g || e.type === 'pointercancel') { g?.ghost?.remove(); if (g?.moved) this.render(); return; }
+      // A finger that starts scrolling cancels the pointer. Redrawing here would
+      // replace the scrolling element under the finger and stop the scroll.
+      if (!g || e.type === 'pointercancel') { g?.ghost?.remove(); if (g?.moved && !g.touch) this.render(); return; }
       const day = parse(g.col.dataset.day);
       if (g.type === 'create') {
         g.ghost?.remove();
@@ -529,11 +580,13 @@ export class CalendarView {
     this.render();
   }
 
-  newEvent(start, { end = null, allDay = false } = {}) {
+  newEvent(start, { end = null, allDay = false, repeat = null } = {}) {
     const conf = this.store.conf();
     const cal = conf.calendars.find(c => c.id === conf.primary) || conf.calendars[0];
     const e = end || addMinutes(start, cal.duration || 60);
-    this.openEditor({ id: newId(), title: '', calendar: cal.id, allDay, start: allDay ? dkey(start) : tkey(start), end: allDay ? dkey(start) : tkey(e), reminders: [...cal.reminders] }, null, true);
+    const base = { id: newId(), title: '', calendar: cal.id, allDay, start: allDay ? dkey(start) : tkey(start), end: allDay ? dkey(start) : tkey(e), reminders: [...cal.reminders] };
+    if (repeat) base.repeat = repeat;
+    this.openEditor(base, null, true);
   }
 
   // ---------- Event editor ----------
