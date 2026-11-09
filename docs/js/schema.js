@@ -4,6 +4,8 @@
 import { basename, cleanTitle, stripCode } from './vault.js';
 
 const W = 200, H = 64, GAP_X = 36, GAP_Y = 96;
+const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const easeOut = t => 1 - Math.pow(1 - t, 3);
 const newId = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-6);
 const el = (tag, props = {}, ...kids) => { const n = document.createElement(tag); Object.assign(n, props); n.append(...kids); return n; };
 const svg = (tag, attrs = {}) => { const n = document.createElementNS('http://www.w3.org/2000/svg', tag); for (const k in attrs) n.setAttribute(k, attrs[k]); return n; };
@@ -112,13 +114,13 @@ export class SchemaView {
 
     this.tools = this.compact
       ? el('div', { className: 'schema-tools' },
-        btn('Вписать', 'Показать схему целиком', () => { this.fit(); this.applyView(); }),
+        btn('Вписать', 'Показать схему целиком', () => this.smooth(() => this.fit())),
         btn('Открыть целиком', 'Открыть блок-схему на весь экран', () => this.openFull(this.focusPath)))
       : el('div', { className: 'schema-tools' },
         btn('+ Заметки', 'Добавить на схему существующие заметки', () => this.togglePanel()),
         btn('Новая заметка', 'Создать заметку прямо на схеме', () => this.askName(null, null)),
         btn('Выровнять', 'Разложить все блоки по уровням заново', () => this.relayout()),
-        btn('Вписать', 'Показать схему целиком', () => { this.fit(); this.applyView(); }));
+        btn('Вписать', 'Показать схему целиком', () => this.smooth(() => this.fit())));
     this.notice = el('div', { className: 'schema-notice', hidden: true });
     this.selBar = el('div', { className: 'schema-selbar', hidden: true });
     this.empty = el('div', { className: 'schema-empty' },
@@ -155,12 +157,14 @@ export class SchemaView {
   }
 
   addNote(path, { parent = null } = {}) {
+    const prev = this.snapshot();
     let n = this.nodeFor(path);
     if (!n) { n = { id: newId(), file: path, x: 0, y: 0, pinned: false }; this.s.nodes.push(n); }
     if (parent) this.connect(parent, n.id, true);
     this.autoPlace();
     this.save();
     this.render();
+    this.tween(prev);
     return n;
   }
   connect(fromId, toId, quiet = false) {
@@ -170,12 +174,14 @@ export class SchemaView {
       if (!quiet) this.toast(`Так получится замкнутый круг: «${this.title(this.node(fromId))}» уже находится ниже «${this.title(this.node(toId))}».`, 7000);
       return false;
     }
+    const prev = this.snapshot();
     this.s.edges.push({ id: newId(), fromNode: fromId, toNode: toId });
-    if (!quiet) { this.autoPlace(); this.save(); this.render(); }
+    if (!quiet) { this.autoPlace(); this.save(); this.render(); this.tween(prev); }
     return true;
   }
   removeSelected() {
     if (!this.sel) return;
+    const prev = this.snapshot();
     if (this.sel.type === 'edge') this.s.edges = this.s.edges.filter(e => e.id !== this.sel.id);
     else {
       const id = this.sel.id;
@@ -183,11 +189,12 @@ export class SchemaView {
       this.s.edges = this.s.edges.filter(e => e.fromNode !== id && e.toNode !== id);
     }
     this.sel = null;
-    this.autoPlace(); this.save(); this.render();
+    this.autoPlace(); this.save(); this.render(); this.tween(prev);
   }
   relayout() {
+    const prev = this.snapshot();
     for (const n of this.s.nodes) n.pinned = false;
-    this.autoPlace(); this.save(); this.render(); this.fit(); this.applyView();
+    this.autoPlace(); this.save(); this.render(); this.tween(prev); this.smooth(() => this.fit());
   }
   title(n) { return n ? basename(n.file) : ''; }
 
@@ -215,6 +222,7 @@ export class SchemaView {
       // In the side panel the open note is only highlighted, so no buttons cover the schema.
       this.sel = this.compact ? null : { type: 'node', id: n.id };
       this.render();
+      if (this.positioned) { this.smooth(() => this.centerOn(n)); return; }
       this.centerOn(n);
     } else {
       this.render();
@@ -227,8 +235,65 @@ export class SchemaView {
   // Called when notes or the schema changed elsewhere (sync, rename, delete).
   refresh() {
     if (!this.visible || this.gesture || this.saving) return;
+    const prev = this.snapshot();
     this.load();
     this.render();
+    this.tween(prev);
+  }
+
+  // ---------- Smooth motion ----------
+  snapshot() { return new Map(this.s.nodes.map(n => [n.id, { x: n.x, y: n.y }])); }
+  blockEl(id) { return this.blocks.querySelector(`[data-id="${CSS.escape(id)}"]`); }
+  // Blocks glide from where they were to where the layout put them; new ones pop in.
+  tween(prev, ms = 320) {
+    this.finishTween();
+    for (const n of this.s.nodes) if (!prev.has(n.id)) this.blockEl(n.id)?.classList.add('appear');
+    if (reducedMotion()) return;
+    const moves = this.s.nodes.filter(n => prev.has(n.id) && (Math.abs(prev.get(n.id).x - n.x) > 0.5 || Math.abs(prev.get(n.id).y - n.y) > 0.5))
+      .map(n => ({ n, fx: prev.get(n.id).x, fy: prev.get(n.id).y, tx: n.x, ty: n.y }));
+    if (!moves.length) return;
+    const t0 = performance.now();
+    const place = e => {
+      for (const m of moves) {
+        m.n.x = m.fx + (m.tx - m.fx) * e;
+        m.n.y = m.fy + (m.ty - m.fy) * e;
+        const b = this.blockEl(m.n.id);
+        if (b) { b.style.left = (m.n.x - W / 2) + 'px'; b.style.top = m.n.y + 'px'; }
+      }
+      this.renderEdges();
+    };
+    this.tweening = { moves, place };
+    const step = now => {
+      const t = Math.min(1, (now - t0) / ms);
+      place(easeOut(t));
+      if (t < 1) this.tweenRaf = requestAnimationFrame(step); else this.tweening = null;
+    };
+    place(0);
+    this.tweenRaf = requestAnimationFrame(step);
+  }
+  finishTween() {
+    if (!this.tweening) return;
+    cancelAnimationFrame(this.tweenRaf);
+    this.tweening.place(1);
+    this.tweening = null;
+  }
+  // Runs fn (which moves the view), then animates from the old view to the new one.
+  smooth(fn, ms = 360) {
+    const from = { ...this.view };
+    fn();
+    const to = { ...this.view };
+    if (reducedMotion() || !this.positioned) { this.applyView(); return; }
+    this.view = from;
+    cancelAnimationFrame(this.viewRaf);
+    this.zoomGoal = null;
+    const t0 = performance.now();
+    const step = now => {
+      const e = easeOut(Math.min(1, (now - t0) / ms));
+      this.view = { x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e, k: from.k + (to.k - from.k) * e };
+      this.applyView();
+      if (e < 1) this.viewRaf = requestAnimationFrame(step);
+    };
+    this.viewRaf = requestAnimationFrame(step);
   }
 
   render() {
@@ -303,7 +368,7 @@ export class SchemaView {
       if (!free.length) list.append(el('p', { className: 'muted', textContent: q ? 'Ничего не найдено.' : 'Все заметки уже на схеме.' }));
       for (const n of free) {
         const b = el('button', { type: 'button', textContent: basename(n.path) });
-        b.addEventListener('click', () => { const node = this.addNote(n.path); this.sel = { type: 'node', id: node.id }; this.render(); this.centerOn(node); this.applyView(); fill(); });
+        b.addEventListener('click', () => { const node = this.addNote(n.path); this.sel = { type: 'node', id: node.id }; this.render(); this.blockEl(node.id)?.classList.add('appear'); this.smooth(() => this.centerOn(node)); fill(); });
         list.append(b);
       }
       addAll.hidden = free.length < 2 || Boolean(q);
@@ -312,7 +377,8 @@ export class SchemaView {
     addAll.addEventListener('click', () => {
       const onSchema = new Set(this.s.nodes.map(n => n.file));
       for (const n of this.vault.notes()) if (!onSchema.has(n.path)) this.s.nodes.push({ id: newId(), file: n.path, x: 0, y: 0, pinned: false });
-      this.autoPlace(); this.save(); this.render(); this.fit(); this.applyView(); fill();
+      const prev = this.snapshot();
+      this.autoPlace(); this.save(); this.render(); this.tween(prev); this.smooth(() => this.fit()); fill();
     });
     const close = el('button', { type: 'button', textContent: 'Готово' });
     close.addEventListener('click', () => { this.panel.hidden = true; });
@@ -347,8 +413,7 @@ export class SchemaView {
     const n = this.addNote(path, { parent });
     this.sel = { type: 'node', id: n.id };
     this.render();
-    this.centerOn(n, true);
-    this.applyView();
+    this.smooth(() => this.centerOn(n, true));
   }
 
   // ---------- View transform ----------
@@ -374,6 +439,21 @@ export class SchemaView {
     this.view.x = r.width / 2 - n.x * this.view.k;
     this.view.y = r.height / 2 - (n.y + H / 2) * this.view.k;
   }
+  easeZoom(k, cx, cy) {
+    cancelAnimationFrame(this.viewRaf);
+    this.zoomGoal = { k: Math.min(2.5, Math.max(0.2, k)), cx, cy };
+    if (reducedMotion()) { this.zoomAt(this.zoomGoal.k, cx, cy); this.zoomGoal = null; return; }
+    if (this.zoomRaf) return;
+    const step = () => {
+      const g = this.zoomGoal;
+      if (!g) { this.zoomRaf = 0; return; }
+      const k = this.view.k + (g.k - this.view.k) * 0.22;
+      if (Math.abs(g.k - k) < 0.0005) { this.zoomAt(g.k, g.cx, g.cy); this.zoomGoal = null; this.zoomRaf = 0; return; }
+      this.zoomAt(k, g.cx, g.cy);
+      this.zoomRaf = requestAnimationFrame(step);
+    };
+    this.zoomRaf = requestAnimationFrame(step);
+  }
   zoomAt(k, cx, cy) {
     const r = this.root.getBoundingClientRect();
     const w = this.toWorld(cx, cy);
@@ -389,6 +469,9 @@ export class SchemaView {
     root.addEventListener('pointerdown', e => {
       if (e.target.closest('.schema-tools, .schema-selbar, .schema-panel, .schema-name, .schema-empty')) return;
       if (e.button !== 0 && e.pointerType === 'mouse') return;
+      this.finishTween();
+      cancelAnimationFrame(this.viewRaf);
+      this.zoomGoal = null;
       this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       root.setPointerCapture(e.pointerId);
       if (this.pointers.size === 2) {
@@ -472,7 +555,7 @@ export class SchemaView {
     root.addEventListener('wheel', e => {
       if (e.target.closest('.schema-panel')) return;
       e.preventDefault();
-      if (e.ctrlKey || e.metaKey || e.deltaMode === 1 || Math.abs(e.deltaY) > 40 && !e.deltaX) this.zoomAt(this.view.k * Math.exp(-e.deltaY * 0.0015), e.clientX, e.clientY);
+      if (e.ctrlKey || e.metaKey || e.deltaMode === 1 || Math.abs(e.deltaY) > 40 && !e.deltaX) this.easeZoom((this.zoomGoal ? this.zoomGoal.k : this.view.k) * Math.exp(-e.deltaY * 0.0015), e.clientX, e.clientY);
       else { this.view.x -= e.deltaX; this.view.y -= e.deltaY; this.applyView(); }
     }, { passive: false });
     document.addEventListener('keydown', e => {

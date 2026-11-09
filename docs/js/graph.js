@@ -8,7 +8,8 @@ export class GraphView {
     this.nodes = []; this.edges = []; this.adj = [];
     this.view = { x: 0, y: 0, k: 1 };
     this.alpha = 0; this.raf = 0; this.active = false;
-    this.hover = -1; this.current = null;
+    this.hover = -1; this.prevHover = -1; this.hoverAt = 0; this.current = null;
+    this.zoomGoal = null;
     this.pointers = new Map(); this.drag = null;
     new ResizeObserver(() => this.resize()).observe(canvas);
     this.bindPointer();
@@ -37,10 +38,10 @@ export class GraphView {
     this.adj = this.nodes.map(() => new Set());
     for (const [a, b] of this.edges) { this.adj[a].add(b); this.adj[b].add(a); }
     this.current = index.has(current) ? index.get(current) : -1;
-    this.hover = -1;
+    this.hover = -1; this.prevHover = -1;
     this.alpha = 1;
     if (fresh || old.size === 0) {
-      for (let i = 0; i < 160 && this.alpha > 0.03; i++) this.tick();
+      for (let i = 0; i < 260 && this.alpha > 0.03; i++) this.tick();
       this.fit();
     }
     this.start();
@@ -71,8 +72,14 @@ export class GraphView {
       this.raf = 0;
       if (!this.active) return;
       if (this.alpha > 0.005 || this.drag) this.tick();
+      if (this.zoomGoal) {
+        const g = this.zoomGoal;
+        const k = this.view.k + (g.k - this.view.k) * 0.22;
+        if (Math.abs(g.k - k) < 0.0005) { this.zoomGoal = null; this.zoomTo(g.k, g.at); } else this.zoomTo(k, g.at);
+      }
       this.draw();
-      if (this.alpha > 0.005 || this.drag || this.pointers.size) this.raf = requestAnimationFrame(loop);
+      const fading = performance.now() - this.hoverAt < 220;
+      if (this.alpha > 0.005 || this.drag || this.pointers.size || this.zoomGoal || fading) this.raf = requestAnimationFrame(loop);
     };
     this.raf = requestAnimationFrame(loop);
   }
@@ -104,10 +111,10 @@ export class GraphView {
     for (const n of N) {
       n.vx -= n.x * 0.006 * a; n.vy -= n.y * 0.006 * a;
       if (n.fixed) { n.vx = 0; n.vy = 0; continue; }
-      n.vx *= 0.55; n.vy *= 0.55;
+      n.vx *= 0.62; n.vy *= 0.62;
       n.x += n.vx; n.y += n.vy;
     }
-    this.alpha *= 0.985;
+    this.alpha *= 0.99;
   }
 
   radius(n) { return 4 + Math.min(8, Math.sqrt(n.deg) * 1.8); }
@@ -135,18 +142,22 @@ export class GraphView {
     ctx.translate(this.w / 2 + this.view.x, this.h / 2 + this.view.y);
     ctx.scale(this.view.k, this.view.k);
 
-    const focus = this.hover >= 0 ? this.hover : -1;
+    const t = Math.min(1, (performance.now() - this.hoverAt) / 200), ease = 1 - Math.pow(1 - t, 3);
+    const shown = this.hover >= 0 ? this.hover : (this.prevHover < this.nodes.length ? this.prevHover : -1);
+    const strength = this.hover >= 0 ? ease : 1 - ease; // 0 = nothing highlighted, 1 = fully
+    const focus = strength > 0.001 ? shown : -1;
     const lit = focus >= 0 ? new Set([focus, ...this.adj[focus]]) : null;
+    const dim = 1 - 0.72 * strength;
     ctx.lineWidth = 1 / this.view.k;
     for (const [i, j] of this.edges) {
       const on = lit && (i === focus || j === focus);
-      ctx.strokeStyle = on ? c.accent : c.line;
-      ctx.globalAlpha = lit && !on ? 0.25 : 1;
+      ctx.strokeStyle = on && strength > 0.4 ? c.accent : c.line;
+      ctx.globalAlpha = lit && !on ? dim : 1;
       ctx.beginPath(); ctx.moveTo(this.nodes[i].x, this.nodes[i].y); ctx.lineTo(this.nodes[j].x, this.nodes[j].y); ctx.stroke();
     }
     this.nodes.forEach((n, i) => {
-      ctx.globalAlpha = lit && !lit.has(i) ? 0.3 : 1;
-      ctx.fillStyle = i === focus || i === this.current ? c.accent : n.exists ? c.node : c.missing;
+      ctx.globalAlpha = lit && !lit.has(i) ? dim : 1;
+      ctx.fillStyle = (i === focus && strength > 0.4) || i === this.current ? c.accent : n.exists ? c.node : c.missing;
       ctx.beginPath(); ctx.arc(n.x, n.y, this.radius(n), 0, Math.PI * 2); ctx.fill();
     });
     const fontSize = 12 / Math.max(this.view.k, 0.6);
@@ -155,8 +166,8 @@ export class GraphView {
     this.nodes.forEach((n, i) => {
       const show = this.view.k > 0.9 || i === this.current || (lit && lit.has(i));
       if (!show) return;
-      ctx.globalAlpha = lit && !lit.has(i) ? 0.3 : 1;
-      ctx.fillStyle = i === focus ? c.text : c.muted;
+      ctx.globalAlpha = lit && !lit.has(i) ? dim : 1;
+      ctx.fillStyle = i === focus && strength > 0.4 ? c.text : c.muted;
       const label = n.label.length > 28 ? n.label.slice(0, 27) + '…' : n.label;
       ctx.fillText(label, n.x, n.y + this.radius(n) + 3);
     });
@@ -180,7 +191,7 @@ export class GraphView {
       const p = pos(e);
       if (!this.drag) {
         const h = this.hit(p.x, p.y);
-        if (h !== this.hover) { this.hover = h; cv.style.cursor = h >= 0 ? 'pointer' : 'grab'; this.draw(); }
+        if (h !== this.hover) { this.prevHover = this.hover; this.hover = h; this.hoverAt = performance.now(); cv.style.cursor = h >= 0 ? 'pointer' : 'grab'; this.start(); }
         return;
       }
       this.pointers.set(e.pointerId, p);
@@ -213,12 +224,13 @@ export class GraphView {
     };
     cv.addEventListener('pointerup', end);
     cv.addEventListener('pointercancel', end);
-    cv.addEventListener('pointerleave', () => { if (!this.drag && this.hover !== -1) { this.hover = -1; this.draw(); } });
+    cv.addEventListener('pointerleave', () => { if (!this.drag && this.hover !== -1) { this.prevHover = this.hover; this.hover = -1; this.hoverAt = performance.now(); this.start(); } });
     cv.addEventListener('wheel', e => {
       e.preventDefault();
       const p = pos(e);
-      const k = Math.min(4, Math.max(0.15, this.view.k * Math.exp(-e.deltaY * 0.0015)));
-      this.zoomTo(k, p, null);
+      const base = this.zoomGoal ? this.zoomGoal.k : this.view.k;
+      this.zoomGoal = { k: Math.min(4, Math.max(0.15, base * Math.exp(-e.deltaY * 0.0015))), at: p };
+      this.start();
     }, { passive: false });
   }
 

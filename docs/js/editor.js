@@ -288,7 +288,7 @@ const theme = EditorView.theme({
   '.cm-cursor': { borderLeftColor: 'var(--accent)', borderLeftWidth: '2px' },
   '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': { backgroundColor: 'var(--selection) !important' },
   '.cm-placeholder': { color: 'var(--text-muted)' },
-  '.cm-tooltip': { background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '8px', boxShadow: '0 8px 24px rgb(0 0 0 / .18)' },
+  '.cm-tooltip': { background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '12px', boxShadow: '0 10px 30px rgb(0 0 0 / .2)', animation: 'pop-in .16s var(--ease)' },
   '.cm-tooltip-autocomplete > ul': { fontFamily: 'var(--font)', maxHeight: '16em' },
   '.cm-tooltip-autocomplete > ul > li': { padding: '4px 10px !important' },
   '.cm-tooltip-autocomplete > ul > li[aria-selected]': { background: 'var(--accent)', color: 'var(--accent-text)' },
