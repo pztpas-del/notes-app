@@ -15,7 +15,6 @@
 <div id="app">
   <aside id="sidebar" aria-label="Заметки">
     <div class="side-head">
-      <span class="brand">Заметки</span>
       <button class="icon" id="newNote" title="Новая заметка (Alt+N)" aria-label="Новая заметка">
         <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
       <button class="icon" id="openGraph" title="Граф связей (Ctrl+G)" aria-label="Граф связей">
@@ -24,16 +23,19 @@
         <svg viewBox="0 0 24 24"><rect x="8.5" y="3" width="7" height="5" rx="1"/><rect x="2.5" y="16" width="7" height="5" rx="1"/><rect x="14.5" y="16" width="7" height="5" rx="1"/><path d="M12 8v4M6 16v-2.5h12V16"/></svg></button>
       <button class="icon" id="openSettings" title="Синхронизация и настройки" aria-label="Настройки">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg></button>
+      <button class="icon push-right" id="hideSide" title="Скрыть список заметок" aria-label="Скрыть список заметок">
+        <svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M9.5 4.5v15M15.5 10l-2 2 2 2"/></svg></button>
     </div>
     <div class="search"><input id="search" type="search" placeholder="Поиск по заметкам" aria-label="Поиск по заметкам" autocomplete="off"></div>
     <nav id="tree" class="tree"></nav>
     <button id="syncStatus" class="sync-status" type="button"></button>
+    <div id="sideResize" class="side-resize" title="Потяните, чтобы изменить ширину" aria-hidden="true"></div>
   </aside>
   <div id="backdrop" hidden></div>
 
   <main id="main">
     <header class="topbar">
-      <button class="icon only-mobile" id="menuBtn" aria-label="Список заметок">
+      <button class="icon" id="menuBtn" title="Показать список заметок" aria-label="Показать список заметок">
         <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
       <span id="crumb" class="crumb"></span>
       <span class="spacer"></span>

@@ -397,7 +397,21 @@ function renderTree() {
   draw(root, '', box);
 }
 
-function openDrawer() { $('app').classList.add('drawer'); $('backdrop').hidden = false; }
+// The notes list stays on the left (as in Obsidian) unless the user hides it or the
+// screen is phone-sized; then it slides in over the content.
+const isPhone = () => matchMedia('(max-width: 520px)').matches;
+const listFloats = () => isPhone() || $('app').classList.contains('side-hidden');
+function setSidebar(shown) {
+  $('app').classList.toggle('side-hidden', !shown);
+  prefs.set('sideHidden', !shown);
+  closeDrawer();
+}
+function setSideWidth(px) {
+  const w = Math.round(Math.min(420, Math.max(200, px)));
+  $('app').style.setProperty('--side-w', w + 'px');
+  return w;
+}
+function openDrawer() { if (!listFloats()) return; $('app').classList.add('drawer'); $('backdrop').hidden = false; }
 function closeDrawer() { $('app').classList.remove('drawer'); $('backdrop').hidden = true; }
 
 // ---------- Note menu ----------
@@ -593,7 +607,26 @@ function bind() {
   $('openSchema').addEventListener('click', () => navigate('#schema'));
   $('openSettings').addEventListener('click', () => navigate('#settings'));
   $('syncStatus').addEventListener('click', () => navigate('#settings'));
-  $('menuBtn').addEventListener('click', openDrawer);
+  $('menuBtn').addEventListener('click', () => { if (isPhone()) openDrawer(); else setSidebar(true); });
+  $('hideSide').addEventListener('click', () => setSidebar(false));
+  $('app').classList.toggle('side-hidden', prefs.get('sideHidden', false));
+  setSideWidth(prefs.get('sideWidth', 230));
+  const grip = $('sideResize');
+  grip.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    grip.classList.add('active');
+    const move = ev => setSideWidth(ev.clientX - $('app').getBoundingClientRect().left);
+    const up = ev => {
+      grip.classList.remove('active');
+      prefs.set('sideWidth', setSideWidth(ev.clientX - $('app').getBoundingClientRect().left));
+      grip.removeEventListener('pointermove', move);
+      grip.removeEventListener('pointerup', up);
+    };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', up);
+  });
+  grip.addEventListener('dblclick', () => prefs.set('sideWidth', setSideWidth(230)));
   $('backdrop').addEventListener('click', closeDrawer);
   $('emptyNew').addEventListener('click', () => newNote());
   $('emptySync').addEventListener('click', () => navigate('#settings'));
