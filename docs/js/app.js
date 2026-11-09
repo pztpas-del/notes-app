@@ -7,6 +7,7 @@ import { SchemaView } from './schema.js';
 import { YaDisk } from './yadisk.js';
 import { MediaStore } from './media.js';
 import { CalendarView } from './calendar.js';
+import { PushClient } from './push.js';
 
 const $ = id => document.getElementById(id);
 const prefs = {
@@ -540,6 +541,8 @@ let schema = null;
 // app is in the background) plus a message inside the app.
 async function notify(title, body, tag, url) {
   toast(`🔔 ${title}: ${body}`, 9000);
+  // With push on, the server sends the system notification; the app only shows the message.
+  if (push.onHere()) return;
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
   const opts = { body, tag, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', data: { url: url || '#calendar' }, renotify: true };
   try {
@@ -548,6 +551,8 @@ async function notify(title, body, tag, url) {
   } catch { try { new Notification(title, opts); } catch { /* not allowed */ } }
 }
 const calendar = new CalendarView($('calendarView'), { vault, toast: (t, ms) => toast(t, ms), notify });
+const push = new PushClient(vault, calendar.store);
+calendar.push = push;
 
 function showCalendar(target) {
   showView('calendarView', 'Календарь');
@@ -777,6 +782,7 @@ vault.onChange(() => {
     if (!$('graphView').hidden && graph) updateGraph();
     if (schema) schema.refresh();
     calendar.refresh();
+    push.scheduleUpload();
     if (current) renderPanel();
   }, 150);
 });
@@ -917,6 +923,8 @@ async function init() {
     syncMedia().then(() => moveLegacyToDisk());
   } else if (yaBack === 'denied') toast('Доступ к Яндекс Диску не выдан.', 7000);
   calendar.startReminders();
+  push.scheduleUpload(3000);
+  setInterval(() => push.upload(true), 6 * 3600e3);
   navigator.serviceWorker?.addEventListener('message', e => { if (e.data?.type === 'open' && e.data.url) location.hash = e.data.url.replace(/^[^#]*/, ''); });
   runSync();
   setInterval(() => { if (document.visibilityState === 'visible') runSync(); }, 60000);

@@ -28,7 +28,8 @@ const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
 const minutesOf = d => d.getHours() * 60 + d.getMinutes();
 
 export class CalendarView {
-  constructor(root, { vault, toast, notify }) {
+  constructor(root, { vault, toast, notify, push = null }) {
+    this.push = push;
     this.root = root;
     this.vault = vault;
     this.toast = toast;
@@ -859,10 +860,28 @@ export class CalendarView {
     const digest = el('input', { type: 'time', id: 'csDigest', value: s.digest });
     const allDayAt = el('input', { type: 'time', id: 'csAllDay', value: s.allDayAt });
     const perm = typeof Notification === 'undefined' ? 'unsupported' : Notification.permission;
-    const notifStatus = el('p', { className: 'muted', textContent: perm === 'granted' ? 'Уведомления разрешены на этом устройстве.' : perm === 'denied' ? 'Уведомления запрещены в настройках браузера для этого сайта. Разрешите их там.' : perm === 'unsupported' ? 'Этот браузер не умеет показывать уведомления.' : 'Уведомления ещё не разрешены.' });
+    const push = this.push;
+    const pushOn = push && push.onHere();
+    const notifStatus = el('p', { className: 'muted', textContent:
+      pushOn ? 'Включены на этом устройстве: напоминания придут, даже если программа закрыта.'
+        : perm === 'denied' ? 'Уведомления запрещены в настройках браузера для этого сайта. Разрешите их там, затем включите здесь.'
+          : perm === 'unsupported' ? 'Этот браузер не умеет показывать уведомления.'
+            : 'На этом устройстве уведомления выключены: напоминания приходят, только пока программа открыта.' });
+    const pushMsg = el('p', { className: 'form-msg', role: 'status' });
+    const serverInput = el('input', { id: 'csPushUrl', placeholder: 'https://notes-push.….workers.dev', value: push ? push.url() : '', autocomplete: 'off', spellcheck: false });
+    const busy = async (b, fn) => {
+      b.disabled = true; pushMsg.className = 'form-msg'; pushMsg.textContent = 'Подождите…';
+      try { const r = await fn(); pushMsg.textContent = r || 'Готово.'; }
+      catch (e) { pushMsg.className = 'form-msg bad'; pushMsg.textContent = e.message || String(e); }
+      finally { b.disabled = false; }
+    };
     const notifRow = el('div', { className: 'row' },
-      perm === 'default' ? btn('Разрешить уведомления', async () => { await Notification.requestPermission(); this.openSettings(); }, 'primary') : null,
-      perm === 'granted' ? btn('Проверить уведомление', () => this.reminders.notify('Проверка', 'Так будут выглядеть напоминания о событиях', 'test', '#calendar')) : null);
+      push && !pushOn && perm !== 'unsupported' ? btn('Включить на этом устройстве', e => busy(e.currentTarget, async () => { await push.enable(serverInput.value); this.openSettings(); return null; }), 'primary') : null,
+      pushOn ? btn('Проверить', e => busy(e.currentTarget, async () => { const r = await push.test(); return r.results?.some(x => x === 201) ? 'Отправлено. Уведомление должно прийти через несколько секунд.' : 'Сервер не смог отправить уведомление: ' + JSON.stringify(r.results); })) : null,
+      pushOn ? btn('Выключить на этом устройстве', e => busy(e.currentTarget, async () => { await push.disable(); this.openSettings(); return null; }), 'danger-text') : null,
+      !push && perm === 'default' ? btn('Разрешить уведомления', async () => { await Notification.requestPermission(); this.openSettings(); }, 'primary') : null);
+    const serverRow = push && !push.url() ? el('label', { className: 'ce-block' }, el('span', { className: 'ce-label', textContent: 'Адрес сервера уведомлений' }), serverInput) : null;
+    if (pushOn) push.status().then(st => { if (!pushMsg.textContent) pushMsg.textContent = `Устройств с уведомлениями: ${st.devices.length}. Запланировано напоминаний: ${st.scheduled}.` + (st.next ? ` Ближайшее: «${st.next.title}», ${new Date(st.next.at).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}.` : ''); }).catch(e => { pushMsg.className = 'form-msg bad'; pushMsg.textContent = e.message; });
     this.openModal(el('div', { className: 'ce', role: 'dialog', 'aria-label': 'Настройки календаря' },
       el('h2', { textContent: 'Настройки календаря' }),
       el('div', { className: 'ce-row' }, el('span', { className: 'ce-label', textContent: 'Неделя начинается с' }), weekStart),
@@ -873,8 +892,10 @@ export class CalendarView {
       el('div', { className: 'ce-row' }, el('span', { className: 'ce-label', textContent: 'Напоминания о событиях «весь день» считаются от' }), allDayAt),
       el('h2', { textContent: 'Уведомления' }),
       notifStatus,
-      el('p', { className: 'muted small', textContent: 'Напоминания приходят, пока программа открыта или недавно свёрнута. Пропущенные за последние 6 часов покажутся при следующем открытии.' }),
+      el('p', { className: 'muted small', textContent: 'Включите на каждом устройстве, где хотите получать напоминания (на Android — в программе, установленной на главный экран). Расписание обновляется с любого устройства, где вы меняете календарь.' }),
+      serverRow,
       notifRow,
+      pushMsg,
       el('div', { className: 'ce-footer' }, el('span', { className: 'spacer' }), btn('Отмена', () => this.closeModal()), btn('Сохранить', () => {
         const cf = this.store.conf();
         Object.assign(cf.settings, { weekStart: +weekStart.value, showWeekends: weekends.checked, holidays: hol.checked,

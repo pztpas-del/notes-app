@@ -219,6 +219,42 @@ export function repeatLabel(r, start) {
   return t;
 }
 
+// Every reminder due in the next `days` days, for the push server:
+// [{ id, at (ms), title, body, url }]. Ids match the ones used inside the app,
+// so a reminder is never shown twice.
+export function scheduleItems(store, days = 60, now = new Date()) {
+  const conf = store.conf();
+  const [ah, am] = conf.settings.allDayAt.split(':').map(Number);
+  const items = [];
+  for (const o of store.occurrences(addDays(now, -1), addDays(now, days), false)) {
+    const base = o.data.allDay ? new Date(o.start.getFullYear(), o.start.getMonth(), o.start.getDate(), ah || 9, am || 0) : o.start;
+    for (const m of o.data.reminders || []) {
+      const at = addMinutes(base, -m);
+      if (at < addMinutes(now, -5) || o.end < at) continue;
+      items.push({ id: `${o.ev.id}|${o.key}|${m}`, at: at.getTime(), title: o.data.title || 'Событие', body: reminderBody(o, at), url: '#calendar=' + encodeURIComponent(o.ev.id + '|' + o.key) });
+    }
+  }
+  const [dh, dm] = conf.settings.digest.split(':').map(Number);
+  const todos = store.todos().items.filter(i => !i.done && i.due);
+  for (let i = 0; i < days; i++) {
+    const day = addDays(startOfDay(now), i);
+    const at = new Date(day.getFullYear(), day.getMonth(), day.getDate(), dh || 8, dm || 0);
+    if (at < now) continue;
+    const today = todos.filter(t => t.due === dkey(day)).length;
+    const late = todos.filter(t => t.due < dkey(day)).length;
+    if (today || late) items.push({ id: 'digest|' + dkey(day), at: at.getTime(), title: 'Дела на сегодня', body: [today && `запланировано: ${today}`, late && `просрочено: ${late}`].filter(Boolean).join(', '), url: '#calendar' });
+  }
+  return items.sort((a, b) => a.at - b.at);
+}
+
+// "сегодня в 18:00 · Онлайн", worded for the moment the reminder is shown.
+export function reminderBody(o, at) {
+  const when = o.data.allDay
+    ? (sameDay(o.start, at) ? 'сегодня, весь день' : sameDay(o.start, addDays(at, 1)) ? 'завтра, весь день' : `${o.start.getDate()} ${MONTHS_GEN[o.start.getMonth()]}, весь день`)
+    : (sameDay(o.start, at) ? 'сегодня в ' : sameDay(o.start, addDays(at, 1)) ? 'завтра в ' : `${o.start.getDate()} ${MONTHS_GEN[o.start.getMonth()]} в `) + hm(o.start);
+  return [when, o.data.place].filter(Boolean).join(' · ');
+}
+
 // ---------- Reminders ----------
 // Checks every 30 seconds while the app runs; reminders missed while it was
 // closed (up to 6 hours late) are shown on the next start.
@@ -250,9 +286,7 @@ export class Reminders {
         if (fired[key] || at > now) continue;
         fired[key] = Date.now();
         if (first || now - at > 6 * 3600e3 || o.end < now) continue;
-        const when = o.data.allDay ? (sameDay(o.start, now) ? 'сегодня, весь день' : `${o.start.getDate()} ${MONTHS_GEN[o.start.getMonth()]}, весь день`)
-          : (sameDay(o.start, now) ? 'сегодня в ' : sameDay(o.start, addDays(now, 1)) ? 'завтра в ' : `${o.start.getDate()} ${MONTHS_GEN[o.start.getMonth()]} в `) + hm(o.start);
-        this.notify(o.data.title || 'Событие', [when, o.data.place].filter(Boolean).join(' · '), key, '#calendar=' + encodeURIComponent(o.ev.id + '|' + o.key));
+        this.notify(o.data.title || 'Событие', reminderBody(o, now), key, '#calendar=' + encodeURIComponent(o.ev.id + '|' + o.key));
       }
     }
     // Morning list of to-dos for today

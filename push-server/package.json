@@ -1,0 +1,7 @@
+{
+  "name": "notes-push",
+  "private": true,
+  "description": "Push server for calendar reminders (Cloudflare Worker).",
+  "scripts": { "deploy": "wrangler deploy" },
+  "devDependencies": { "wrangler": "^4.0.0" }
+}
