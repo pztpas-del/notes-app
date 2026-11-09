@@ -5,6 +5,12 @@ export const CAL_DIR = 'Календарь';
 const EV_DIR = CAL_DIR + '/События';
 const CONF = CAL_DIR + '/календари.json';
 const TODO = CAL_DIR + '/Дела.json';
+// Day notes: one small file per day, "Календарь/Дни/2026-11-10.json" (only in the calendar).
+const DAY_DIR = CAL_DIR + '/Дни';
+const DAY_RE = /^(\d{4}-\d{2}-\d{2})\.json$/;
+// How long day notes are kept: deleted once the day / week / month / year is over.
+export const DAY_KEEP = [['never', 'Не удалять'], ['day', 'Удалять после прошедшего дня'], ['week', 'Удалять после прошедшей недели'],
+  ['month', 'Удалять после прошедшего месяца'], ['year', 'Удалять с наступлением нового года']];
 
 export const pad = n => String(n).padStart(2, '0');
 export const dkey = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -55,7 +61,7 @@ const DEFAULT_CONF = () => ({
     { id: 'rest', name: 'Отдых', color: '#f29d38', visible: true, reminders: [60], duration: 60 },
   ],
   primary: 'tasks',
-  settings: { weekStart: 1, showWeekends: true, workStart: 9, workEnd: 18, holidays: true, digest: '08:00', allDayAt: '09:00' },
+  settings: { weekStart: 1, showWeekends: true, workStart: 9, workEnd: 18, holidays: true, digest: '08:00', allDayAt: '09:00', dayNotesKeep: 'never' },
 });
 
 const json = s => { try { return JSON.parse(s); } catch { return null; } };
@@ -106,6 +112,56 @@ export class CalendarStore {
     return t;
   }
   saveTodos(t) { this.vault.write(TODO, JSON.stringify(t, null, 2) + '\n'); }
+
+  // ---------- Day notes ----------
+  // Keys ("YYYY-MM-DD") of every day that has a note, sorted.
+  dayNoteKeys() {
+    const out = [];
+    for (const f of this.vault.files.values()) {
+      if (f.deleted || !f.path.startsWith(DAY_DIR + '/')) continue;
+      const m = f.path.slice(DAY_DIR.length + 1).match(DAY_RE);
+      if (m && this.dayNote(m[1])) out.push(m[1]);
+    }
+    return out.sort();
+  }
+  dayNote(key) {
+    const f = this.vault.get(`${DAY_DIR}/${key}.json`);
+    if (!f || f.deleted) return '';
+    return (json(f.content) || {}).text || '';
+  }
+  saveDayNote(key, text) {
+    const path = `${DAY_DIR}/${key}.json`;
+    const clean = String(text || '').replace(/\s+$/, '');
+    if (!clean.trim()) { if (this.vault.get(path) && !this.vault.get(path).deleted) this.vault.remove(path); return; }
+    if (clean === this.dayNote(key)) return;
+    this.vault.write(path, JSON.stringify({ date: key, text: clean, updated: new Date().toISOString() }, null, 2) + '\n');
+  }
+  // Deletes the notes of days from..to (keys, inclusive; null = no limit). Returns how many.
+  clearDayNotes(from = null, to = null) {
+    let n = 0;
+    for (const k of this.dayNoteKeys()) {
+      if ((from && k < from) || (to && k > to)) continue;
+      this.vault.remove(`${DAY_DIR}/${k}.json`);
+      n++;
+    }
+    return n;
+  }
+  // The first day whose note is still kept under the chosen rule; older ones go.
+  dayNotesCutoff(mode, now = new Date(), weekStart = 1) {
+    if (mode === 'day') return dkey(now);
+    if (mode === 'week') { const back = weekStart === 7 ? isoDow(now) % 7 : isoDow(now) - 1; return dkey(addDays(startOfDay(now), -back)); }
+    if (mode === 'month') return dkey(new Date(now.getFullYear(), now.getMonth(), 1));
+    if (mode === 'year') return dkey(new Date(now.getFullYear(), 0, 1));
+    return null;
+  }
+  cleanupDayNotes(now = new Date()) {
+    const s = this.conf().settings;
+    const cut = this.dayNotesCutoff(s.dayNotesKeep, now, s.weekStart);
+    if (!cut) return 0;
+    const old = this.dayNoteKeys().filter(k => k < cut);
+    if (!old.length) return 0;
+    return this.clearDayNotes(null, dkey(addDays(parse(cut), -1)));
+  }
 
   // Every occurrence that overlaps [from, to), sorted by start.
   // visibleOnly: skip calendars the user switched off.

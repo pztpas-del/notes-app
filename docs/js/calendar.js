@@ -3,7 +3,7 @@
 import {
   CalendarStore, Reminders, expand, eventSpan, repeatLabel, reminderLabel, holiday, toIcs, fromIcs,
   pad, dkey, tkey, hm, parse, addDays, addMinutes, startOfDay, sameDay, newId, isoDow, weekOfMonth,
-  MONTHS, MONTHS_GEN, WD, WD_LONG, COLORS, REMIND_PRESETS,
+  MONTHS, MONTHS_GEN, WD, WD_LONG, COLORS, REMIND_PRESETS, DAY_KEEP,
 } from './calendar-data.js';
 
 const HOUR = 48; // pixels per hour in day/week views
@@ -96,7 +96,8 @@ export class CalendarView {
     }
   }
   hide() { this.visible = false; this.closePop(); this.closeModal(); }
-  refresh() { if (this.visible && this.modal.hidden && !this.gesture) this.render(); }
+  // Not while the day note is being typed: redrawing would take the cursor away.
+  refresh() { if (this.visible && this.modal.hidden && !this.gesture && !document.activeElement?.closest?.('.day-note')) this.render(); }
 
   go(date) { this.anchor = startOfDay(date); this.render(); }
   step(dir) {
@@ -156,6 +157,7 @@ export class CalendarView {
   }
 
   render() {
+    try { this.store.cleanupDayNotes(); } catch { /* keep showing the calendar */ }
     this.closePop();
     this.renderToolbar();
     this.renderSide();
@@ -246,6 +248,20 @@ export class CalendarView {
     }
     const importInput = el('input', { type: 'file', accept: '.ics,text/calendar', hidden: true });
     importInput.addEventListener('change', () => this.importIcs(importInput));
+    const keepSel = el('select', { className: 'side-select', title: 'Что делать со старыми заметками дней' },
+      ...DAY_KEEP.map(([v, t]) => el('option', { value: v, textContent: t, selected: conf.settings.dayNotesKeep === v })));
+    keepSel.addEventListener('change', () => {
+      const v = keepSel.value;
+      const cf = this.store.conf();
+      const cut = this.store.dayNotesCutoff(v, new Date(), cf.settings.weekStart);
+      const doomed = cut ? this.store.dayNoteKeys().filter(k => k < cut).length : 0;
+      if (doomed && !confirm(`Сразу удалятся старые заметки дней: ${doomed}. Продолжить?`)) { keepSel.value = cf.settings.dayNotesKeep; return; }
+      cf.settings.dayNotesKeep = v;
+      this.store.saveConf(cf);
+      const n = this.store.cleanupDayNotes();
+      this.toast(n ? `Настройка сохранена, удалено старых заметок: ${n}` : 'Настройка сохранена');
+      this.render();
+    });
     const sideRepeat = btn('↻ Повторяющееся событие', () => this.openRepeatMenu(sideRepeat), 'cal-repeat-side');
     rc(this.side,
       el('div', { className: 'cal-side-top' }, el('b', { textContent: 'Календарь' }), btn('✕', () => this.setSide(false), 'icon-text', 'Закрыть')),
@@ -259,6 +275,10 @@ export class CalendarView {
           btn('›', () => { this.miniMonth = new Date(mm.getFullYear(), mm.getMonth() + 1, 1); this.renderSide(); }, 'icon-text')),
         grid),
       el('div', { className: 'side-sec' }, el('div', { className: 'side-sec-head' }, el('b', { textContent: 'Календари' }), btn('+', () => this.openCalSettings(null), 'icon-text', 'Новый календарь')), cals),
+      el('div', { className: 'side-sec side-daynotes' },
+        el('b', { textContent: 'Заметки дней' }),
+        keepSel,
+        btn('Стереть заметки…', () => { this.setSide(false); this.openClearDayNotes(); }, 'danger-text')),
       el('div', { className: 'side-sec side-tools' },
         btn('Настройки календаря', () => this.openSettings()),
         btn('Импорт из .ics', () => importInput.click()),
@@ -310,12 +330,99 @@ export class CalendarView {
       body.append(col);
     }
     const scroller = el('div', { className: 'cal-scroll' }, body);
-    rc(this.body, el('div', { className: 'cal-week', style: { '--days': days.length } }, head, allday, scroller));
+    // Day note: a text field above the schedule in the day view, a row of short notes in the week view.
+    let notes;
+    if (this.view === 'day') notes = this.dayNoteBox(days[0]);
+    else {
+      notes = el('div', { className: 'cal-daynotes', style: { gridTemplateColumns: `52px repeat(${days.length}, minmax(0, 1fr))` } }, el('div', { className: 'gutter-label', textContent: '📝' }));
+      for (const d of days) {
+        const text = this.store.dayNote(dkey(d));
+        const cell = el('button', { type: 'button', className: 'daynote-cell' + (text ? ' has' : ''), title: text || 'Добавить заметку к дню' },
+          text ? text.split('\n').filter(Boolean).slice(0, 2).join(' · ') : '+');
+        cell.addEventListener('click', () => this.openDayNote(d));
+        notes.append(cell);
+      }
+    }
+    rc(this.body, el('div', { className: 'cal-week', style: { '--days': days.length } }, head, allday, notes, scroller));
     this.bindGrid(body);
     this.drawNowLine();
     const target = this.scrollTop ?? Math.max(0, (Math.min(workStart, new Date().getHours()) - 1) * HOUR);
     requestAnimationFrame(() => { scroller.scrollTop = target; });
     scroller.addEventListener('scroll', () => { this.scrollTop = scroller.scrollTop; });
+  }
+
+  // ---------- Day notes ----------
+  // The note field of the day view: saved as you type.
+  dayNoteBox(d) {
+    const key = dkey(d);
+    const ta = el('textarea', { className: 'day-note-text', placeholder: 'Заметка к этому дню: дела, мысли, что не забыть…', value: this.store.dayNote(key), rows: 2 });
+    const state = el('span', { className: 'day-note-state' });
+    const fit = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight + 2, Math.max(90, this.root.clientHeight * 0.3)) + 'px'; };
+    let timer = null;
+    const save = () => { clearTimeout(timer); this.store.saveDayNote(key, ta.value); state.textContent = ta.value.trim() ? 'Сохранено' : ''; };
+    ta.addEventListener('input', () => { fit(); state.textContent = ''; clearTimeout(timer); timer = setTimeout(save, 600); });
+    ta.addEventListener('blur', () => { save(); setTimeout(() => this.refresh(), 0); });
+    requestAnimationFrame(fit);
+    return el('div', { className: 'day-note' }, el('div', { className: 'day-note-head' }, el('b', { textContent: '📝 Заметка дня' }), state), ta);
+  }
+
+  // A dialog for the note of any day (week and month views, schedule).
+  openDayNote(d) {
+    const key = dkey(d);
+    const old = this.store.dayNote(key);
+    const ta = el('textarea', { className: 'day-note-text', placeholder: 'Заметка к этому дню: дела, мысли, что не забыть…', value: old, rows: 8 });
+    const save = () => { this.store.saveDayNote(key, ta.value); this.closeModal(); this.render(); };
+    ta.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) save(); });
+    this.openModal(el('div', { className: 'ce', role: 'dialog', 'aria-label': 'Заметка дня' },
+      el('h2', { textContent: `📝 ${cap(dayTitle(d))}` }),
+      ta,
+      el('div', { className: 'ce-footer' },
+        old ? btn('Удалить', () => { this.store.saveDayNote(key, ''); this.closeModal(); this.render(); this.toast('Заметка дня удалена'); }, 'danger-text') : null,
+        btn('Открыть день', () => { this.store.saveDayNote(key, ta.value); this.closeModal(); this.anchor = startOfDay(d); this.setView('day'); }),
+        el('span', { className: 'spacer' }),
+        btn('Отмена', () => this.closeModal()),
+        btn('Сохранить', save, 'primary'))));
+    requestAnimationFrame(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); });
+  }
+
+  // Deleting the notes of a period: the day, week, month or year shown now, or all of them.
+  openClearDayNotes() {
+    const a = this.anchor;
+    const ws = this.weekStart(a);
+    const periods = [
+      ['day', `За день: ${a.getDate()} ${MONTHS_GEN[a.getMonth()]}`, dkey(a), dkey(a)],
+      ['week', `За неделю: ${ws.getDate()} ${MONTHS_GEN[ws.getMonth()]} – ${addDays(ws, 6).getDate()} ${MONTHS_GEN[addDays(ws, 6).getMonth()]}`, dkey(ws), dkey(addDays(ws, 6))],
+      ['month', `За месяц: ${MONTHS[a.getMonth()]} ${a.getFullYear()}`, dkey(new Date(a.getFullYear(), a.getMonth(), 1)), dkey(new Date(a.getFullYear(), a.getMonth() + 1, 0))],
+      ['year', `За год: ${a.getFullYear()}`, `${a.getFullYear()}-01-01`, `${a.getFullYear()}-12-31`],
+      ['all', 'Все заметки дней', null, null],
+    ];
+    const keys = this.store.dayNoteKeys();
+    const count = (f, t) => keys.filter(k => (!f || k >= f) && (!t || k <= t)).length;
+    let pick = 'day';
+    const list = el('div', { className: 'clear-list' });
+    const go = btn('', () => {
+      const p = periods.find(x => x[0] === pick);
+      const n = this.store.clearDayNotes(p[2], p[3]);
+      this.closeModal(); this.render();
+      this.toast(n ? `Стёрто заметок: ${n}` : 'Стирать было нечего');
+    }, 'danger');
+    const draw = () => {
+      rc(list, ...periods.map(([id, text, f, t]) => {
+        const r = el('input', { type: 'radio', name: 'clearPeriod', checked: id === pick });
+        r.addEventListener('change', () => { pick = id; draw(); });
+        return el('label', { className: 'ce-check' }, r, el('span', { textContent: `${text} (${count(f, t)})` }));
+      }));
+      const p = periods.find(x => x[0] === pick);
+      const n = count(p[2], p[3]);
+      go.textContent = n ? `Стереть (${n})` : 'Стереть';
+      go.disabled = !n;
+    };
+    draw();
+    this.openModal(el('div', { className: 'ce', role: 'dialog', 'aria-label': 'Стереть заметки дней' },
+      el('h2', { textContent: 'Стереть заметки дней' }),
+      el('p', { className: 'muted small', textContent: 'Период считается от даты, которая сейчас открыта в календаре. Стёртые заметки не вернуть.' }),
+      list,
+      el('div', { className: 'ce-footer' }, el('span', { className: 'spacer' }), btn('Отмена', () => this.closeModal()), go)));
   }
 
   drawNowLine() {
@@ -442,7 +549,11 @@ export class CalendarView {
       const d = addDays(start, i);
       const h = conf.settings.holidays && holiday(d);
       const num = btn(String(d.getDate()), () => { this.anchor = d; this.setView('day'); }, 'month-num');
-      const cell = el('div', { className: 'month-cell' + (d.getMonth() !== first.getMonth() ? ' other' : '') + (sameDay(d, new Date()) ? ' today' : '') + (h || isoDow(d) >= 6 ? ' off' : ''), title: h || '' }, num);
+      const note = this.store.dayNote(dkey(d));
+      const noteBtn = btn('📝', () => this.openDayNote(d), 'month-note' + (note ? ' has' : ''), note || 'Заметка к дню');
+      const cell = el('div', { className: 'month-cell' + (d.getMonth() !== first.getMonth() ? ' other' : '') + (sameDay(d, new Date()) ? ' today' : '') + (h || isoDow(d) >= 6 ? ' off' : ''), title: h || '' },
+        el('div', { className: 'month-top' }, num, noteBtn));
+      if (note) cell.append(el('div', { className: 'month-note-text', textContent: note.split('\n').find(Boolean) || '' }));
       if (h) cell.append(el('div', { className: 'holiday', textContent: h }));
       const list = occ.filter(o => o.start < addDays(d, 1) && o.end > d);
       const items = [...list.map(o => this.chip(o, conf)), ...todos.filter(t => t.due === dkey(d)).map(t => this.todoChip(t))];
@@ -464,10 +575,17 @@ export class CalendarView {
     let shown = 0;
     for (let d = from; d < to; d = addDays(d, 1)) {
       const items = occ.filter(o => o.start < addDays(d, 1) && o.end > d);
-      if (!items.length) continue;
+      const note = this.store.dayNote(dkey(d));
+      if (!items.length && !note) continue;
       shown++;
       const rel = sameDay(d, new Date()) ? 'Сегодня, ' : sameDay(d, addDays(new Date(), 1)) ? 'Завтра, ' : '';
       list.append(el('h2', { className: 'agenda-day' + (sameDay(d, new Date()) ? ' today' : ''), textContent: rel + dayTitle(d) }));
+      if (note) {
+        const day = d;
+        const n = el('button', { type: 'button', className: 'agenda-note', textContent: '📝 ' + note });
+        n.addEventListener('click', () => this.openDayNote(day));
+        list.append(n);
+      }
       for (const o of items) {
         const row = el('button', { type: 'button', className: 'agenda-row', style: { '--ev': this.color(o, conf) } },
           el('span', { className: 'agenda-time', textContent: o.data.allDay || o.end - o.start >= 864e5 ? 'весь день' : `${hm(o.start)}–${hm(o.end)}` }),
