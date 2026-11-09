@@ -460,6 +460,11 @@ async function saveSettings(e) {
   if (!next.owner || !next.repo || !next.token) {
     msg.textContent = 'Заполните имя пользователя, хранилище и токен.'; msg.className = 'form-msg bad'; return;
   }
+  if (!next.api && !/^(github_pat_|gh[pousr]_)[A-Za-z0-9_]+$/.test(next.token)) {
+    msg.textContent = 'В поле токена вставлено что-то другое. Токен начинается с github_pat_ и состоит из латинских букв и цифр. Скопируйте его на GitHub кнопкой копирования рядом с ним.';
+    msg.className = 'form-msg bad';
+    return;
+  }
   const previous = settings;
   settings = next;
   msg.textContent = 'Проверяю подключение…'; msg.className = 'form-msg';
