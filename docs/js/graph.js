@@ -14,9 +14,19 @@ export class GraphView {
     this.bindPointer();
   }
 
-  setData({ nodes, edges }, current) {
+  // refit: settle the layout and fit it to the view (used when the set of notes changes).
+  setData({ nodes, edges }, current, refit = false) {
     const old = new Map(this.nodes.map(n => [n.id, n]));
-    const fresh = !this.nodes.length;
+    const fresh = !this.nodes.length || refit;
+    const sig = nodes.map(n => n.id).join('\n') + '|' + edges.map(e => e.join('>')).join('\n');
+    const same = sig === this.sig;
+    this.sig = sig;
+    if (same && !fresh) { // nothing moved: just repaint (e.g. while typing in the note)
+      const idx = this.nodes.findIndex(n => n.id === current);
+      this.current = idx;
+      this.draw();
+      return;
+    }
     this.nodes = nodes.map((n, i) => {
       const o = old.get(n.id);
       const a = i * 2.39996, r = 12 * Math.sqrt(i + 1);

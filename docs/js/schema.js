@@ -76,8 +76,9 @@ function reaches(s, from, to) {
 }
 
 export class SchemaView {
-  constructor(root, { vault, openNote, toast, onSaved }) {
-    Object.assign(this, { root, vault, openNote, toast, onSaved });
+  // compact: the small copy in the right panel next to a note.
+  constructor(root, { vault, openNote, toast, onSaved, compact = false, openFull = null }) {
+    Object.assign(this, { root, vault, openNote, toast, onSaved, compact, openFull });
     this.s = { nodes: [], edges: [] };
     this.view = { x: 0, y: 80, k: 1 };
     this.sel = null; // { type: 'node' | 'edge', id }
@@ -109,22 +110,27 @@ export class SchemaView {
     this.blocks = el('div', { className: 'schema-blocks' });
     this.stage.append(this.edgesSvg, this.blocks);
 
-    this.tools = el('div', { className: 'schema-tools' },
-      btn('+ Заметки', 'Добавить на схему существующие заметки', () => this.togglePanel()),
-      btn('Новая заметка', 'Создать заметку прямо на схеме', () => this.askName(null, null)),
-      btn('Выровнять', 'Разложить все блоки по уровням заново', () => this.relayout()),
-      btn('Вписать', 'Показать схему целиком', () => { this.fit(); this.applyView(); }));
+    this.tools = this.compact
+      ? el('div', { className: 'schema-tools' },
+        btn('Вписать', 'Показать схему целиком', () => { this.fit(); this.applyView(); }),
+        btn('Открыть целиком', 'Открыть блок-схему на весь экран', () => this.openFull(this.focusPath)))
+      : el('div', { className: 'schema-tools' },
+        btn('+ Заметки', 'Добавить на схему существующие заметки', () => this.togglePanel()),
+        btn('Новая заметка', 'Создать заметку прямо на схеме', () => this.askName(null, null)),
+        btn('Выровнять', 'Разложить все блоки по уровням заново', () => this.relayout()),
+        btn('Вписать', 'Показать схему целиком', () => { this.fit(); this.applyView(); }));
+    this.notice = el('div', { className: 'schema-notice', hidden: true });
     this.selBar = el('div', { className: 'schema-selbar', hidden: true });
     this.empty = el('div', { className: 'schema-empty' },
       el('b', { textContent: 'Схема пока пустая' }),
-      el('span', { textContent: 'Добавьте заметки кнопкой «+ Заметки» или создайте новую. Чтобы связать блоки, потяните за кружок внизу блока к другому блоку. Если отпустить на пустом месте, появится новая заметка ниже.' }));
+      el('span', { textContent: this.compact ? 'Нажмите «Открыть целиком», чтобы добавить заметки и связи.' : 'Добавьте заметки кнопкой «+ Заметки» или создайте новую. Чтобы связать блоки, потяните за кружок внизу блока к другому блоку. Если отпустить на пустом месте, появится новая заметка ниже.' }));
     this.panel = el('div', { className: 'schema-panel', hidden: true });
     this.nameBox = el('form', { className: 'schema-name', hidden: true });
     this.nameInput = el('input', { placeholder: 'Название заметки', autocomplete: 'off' });
     this.nameBox.append(this.nameInput, el('button', { type: 'submit', className: 'primary', textContent: 'Создать' }));
     this.nameBox.addEventListener('submit', e => { e.preventDefault(); this.commitName(); });
     this.nameInput.addEventListener('keydown', e => { if (e.key === 'Escape') this.cancelName(); });
-    this.root.append(this.stage, this.tools, this.selBar, this.empty, this.panel, this.nameBox);
+    this.root.append(this.stage, this.tools, this.selBar, this.empty, this.panel, this.nameBox, this.notice);
     this.bindPointer();
   }
 
@@ -186,12 +192,28 @@ export class SchemaView {
   title(n) { return n ? basename(n.file) : ''; }
 
   // ---------- Showing ----------
-  show(focusPath) {
+  show(focusPath, { autoAdd = true } = {}) {
     this.visible = true;
+    this.focusPath = focusPath;
     this.load();
-    if (focusPath && this.vault.get(focusPath)) {
+    this.notice.hidden = true;
+    const has = focusPath && this.vault.get(focusPath);
+    if (has && !this.nodeFor(focusPath) && !autoAdd) {
+      // The panel never changes the schema by itself: offer to add the note.
+      const add = el('button', { type: 'button', className: 'primary', textContent: 'Добавить на схему' });
+      add.addEventListener('click', () => this.show(focusPath));
+      this.notice.replaceChildren(el('span', { textContent: `«${basename(focusPath)}» пока нет на блок-схеме.` }), add);
+      this.notice.hidden = false;
+      this.render();
+      if (!this.positioned) this.fit();
+      this.positioned = true;
+      this.applyView();
+      return;
+    }
+    if (has) {
       const n = this.nodeFor(focusPath) || this.addNote(focusPath);
-      this.sel = { type: 'node', id: n.id };
+      // In the side panel the open note is only highlighted, so no buttons cover the schema.
+      this.sel = this.compact ? null : { type: 'node', id: n.id };
       this.render();
       this.centerOn(n);
     } else {
@@ -214,7 +236,7 @@ export class SchemaView {
     for (const n of this.s.nodes) {
       const note = this.vault.get(n.file);
       const first = note ? stripCode(note.content).split('\n').map(l => l.replace(/^[#>*\-+\s]+|\[[ xX]\]\s*/g, '').trim()).find(Boolean) || '' : 'Заметка удалена или ещё не пришла';
-      const b = el('div', { className: 'sblock' + (note ? '' : ' missing') + (this.sel?.type === 'node' && this.sel.id === n.id ? ' selected' : '') },
+      const b = el('div', { className: 'sblock' + (note ? '' : ' missing') + (this.sel?.type === 'node' && this.sel.id === n.id ? ' selected' : '') + (this.compact && n.file === this.focusPath ? ' current' : '') },
         el('div', { className: 'sblock-title', textContent: this.title(n) }),
         el('div', { className: 'sblock-sub', textContent: first.replace(/\[\[([^\]|]+\|)?([^\]]+)\]\]/g, '$2').slice(0, 80) }),
         el('div', { className: 'sblock-handle', title: 'Потяните к другому блоку, чтобы связать' }));
@@ -253,8 +275,8 @@ export class SchemaView {
     if (this.sel.type === 'node') {
       const n = this.node(this.sel.id);
       if (!n) { bar.hidden = true; return; }
-      bar.append(el('span', { className: 'schema-selname', textContent: this.title(n) }));
-      if (this.vault.get(n.file)) bar.append(btn('Открыть', () => this.openNote(n.file), 'primary'));
+      if (!this.compact) bar.append(el('span', { className: 'schema-selname', textContent: this.title(n) }));
+      if (this.vault.get(n.file) && !(this.compact && n.file === this.focusPath)) bar.append(btn('Открыть', () => this.openNote(n.file), 'primary'));
       bar.append(btn('Добавить ниже', () => this.askName(n.id, null)), btn('Убрать со схемы', () => this.removeSelected(), 'danger-text'));
     } else {
       const e = this.s.edges.find(x => x.id === this.sel.id);

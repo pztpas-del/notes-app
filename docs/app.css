@@ -208,7 +208,7 @@ code { font-family: var(--mono); font-size: .9em; background: var(--code-bg); pa
 .schema-blocks { position: absolute; left: 0; top: 0; }
 .sblock { position: absolute; width: 200px; height: 64px; box-sizing: border-box; padding: 9px 12px; background: var(--bg); border: 1.5px solid var(--border); border-radius: 10px; cursor: pointer; box-shadow: 0 2px 8px rgb(0 0 0 / .12); }
 .sblock:hover { border-color: var(--text-muted); }
-.sblock.selected { border-color: var(--accent); box-shadow: 0 0 0 3px var(--selection); }
+.sblock.selected, .sblock.current { border-color: var(--accent); box-shadow: 0 0 0 3px var(--selection); }
 .sblock.target { border-color: var(--accent); background: var(--side); }
 .sblock.dragging { opacity: .9; box-shadow: 0 8px 24px rgb(0 0 0 / .25); cursor: grabbing; }
 .sblock.missing { border-style: dashed; opacity: .7; }
@@ -237,3 +237,28 @@ code { font-family: var(--mono); font-size: .9em; background: var(--code-bg); pa
 .link-btn { border: 0; background: transparent; color: var(--link); padding: 2px 0; font-size: 14px; }
 .backlinks h2 + .schema-rel, .backlinks .schema-rel ~ h2 { margin-top: 0; }
 .backlinks h2 { margin-top: 14px; }
+
+/* Right panel: the open note's links graph or the flowchart, next to the note. */
+.main-row { flex: 1; display: flex; min-height: 0; position: relative; }
+.main-row > .view { min-width: 0; }
+#panelBtn[aria-pressed="true"] { color: var(--accent); background: var(--surface); }
+.right-panel { position: relative; flex: none; width: var(--rp-w, 340px); display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--border); background: var(--bg); }
+.rp-resize { position: absolute; top: 0; bottom: 0; left: -4px; width: 8px; cursor: col-resize; z-index: 3; touch-action: none; }
+.rp-resize:hover, .rp-resize.active { background: linear-gradient(to right, transparent 3px, var(--accent) 3px, var(--accent) 5px, transparent 5px); }
+.rp-head { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 10px; border-bottom: 1px solid var(--border); min-height: 46px; }
+.rp-tabs { display: flex; gap: 2px; background: var(--surface); border-radius: 7px; padding: 2px; }
+.rp-tabs button { border: 0; background: transparent; padding: 4px 12px; font-size: 14px; border-radius: 5px; }
+.rp-tabs button[aria-selected="true"] { background: var(--bg); color: var(--accent); font-weight: 600; box-shadow: 0 1px 3px rgb(0 0 0 / .15); }
+.rp-all { display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--text-muted); margin-right: auto; white-space: nowrap; }
+.rp-head #rpClose { margin-left: auto; }
+.rp-body { flex: 1; min-height: 0; position: relative; }
+#rpGraph { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+#rpSchema { position: absolute; inset: 0; }
+.schema-view.compact .schema-tools button { font-size: 13px; padding: 5px 9px; }
+.schema-view.compact .schema-selbar { bottom: 10px; }
+.schema-view.compact .schema-selname { max-width: 120px; }
+.schema-notice { position: absolute; left: 12px; right: 12px; bottom: 12px; display: grid; gap: 8px; justify-items: start; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px; box-shadow: 0 8px 24px rgb(0 0 0 / .18); z-index: 6; cursor: default; font-size: 14px; }
+@media (max-width: 900px) {
+  .right-panel { position: absolute; right: 0; top: 0; bottom: 0; width: min(92%, 380px); z-index: 12; box-shadow: -8px 0 30px rgb(0 0 0 / .25); }
+  .rp-resize { display: none; }
+}

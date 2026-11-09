@@ -58,12 +58,13 @@ function navigate(hash) { if (location.hash === hash) route(); else location.has
 
 function showView(id, crumb) {
   for (const v of ['noteView', 'fileView', 'graphView', 'schemaView', 'settingsView', 'emptyView']) $(v).hidden = v !== id;
-  $('modeBtn').hidden = $('moreBtn').hidden = $('attachBtn').hidden = id !== 'noteView';
+  $('modeBtn').hidden = $('moreBtn').hidden = $('attachBtn').hidden = $('panelBtn').hidden = id !== 'noteView';
   if (id !== 'noteView') current = null;
   if (id !== 'fileView') currentFile = null;
   if (crumb !== undefined) $('crumb').textContent = crumb;
   if (graph) graph.show(id === 'graphView');
   if (schema && id !== 'schemaView') schema.hide();
+  if (id !== 'noteView') renderPanel();
 }
 
 function route() {
@@ -104,6 +105,7 @@ function showNote(path) {
   prefs.set('last', path);
   if (switching) { $('titleError').hidden = true; $('main').querySelector('#noteView').scrollTop = 0; }
   renderNote(switching);
+  renderPanel(switching);
 }
 
 function renderNote(switching = false) {
@@ -443,6 +445,61 @@ function openMenu() {
 }
 
 // ---------- Graph ----------
+// ---------- Right panel: links graph or flowchart next to the open note ----------
+const rp = { open: prefs.get('rpOpen', false), tab: prefs.get('rpTab', 'graph'), all: prefs.get('rpAll', false) };
+let rpGraph = null, rpSchema = null, rpFor = null;
+
+// The note, the notes it links to and the notes linking to it (or every note).
+function localGraph(path, all) {
+  const g = vault.graph(false);
+  if (all) return g;
+  const keep = new Set([path]);
+  for (const [a, b] of g.edges) { if (a === path) keep.add(b); if (b === path) keep.add(a); }
+  return { nodes: g.nodes.filter(n => keep.has(n.id)), edges: g.edges.filter(([a, b]) => keep.has(a) && keep.has(b)) };
+}
+
+function renderPanel(switched = false) {
+  const show = rp.open && current && !$('noteView').hidden;
+  $('panelBtn').setAttribute('aria-pressed', String(rp.open));
+  $('rightPanel').hidden = !show;
+  if (!show) { if (rpGraph) rpGraph.show(false); if (rpSchema) rpSchema.hide(); return; }
+  const graphTab = rp.tab === 'graph';
+  $('rpTabGraph').setAttribute('aria-selected', String(graphTab));
+  $('rpTabSchema').setAttribute('aria-selected', String(!graphTab));
+  $('rpAllWrap').hidden = !graphTab;
+  $('rpAll').checked = rp.all;
+  $('rpGraph').hidden = !graphTab;
+  $('rpSchema').hidden = graphTab;
+  const moved = switched || rpFor !== current;
+  if (graphTab) {
+    if (rpSchema) rpSchema.hide();
+    if (!rpGraph) rpGraph = new GraphView($('rpGraph'), { onOpen: n => (n.exists ? navigate(noteHash(n.id)) : openOrCreate(n.label)) });
+    rpGraph.show(true);
+    rpGraph.setData(localGraph(current, rp.all), current, moved);
+  } else {
+    if (rpGraph) rpGraph.show(false);
+    if (!rpSchema) {
+      rpSchema = new SchemaView($('rpSchema'), {
+        vault, compact: true,
+        openNote: p => navigate(noteHash(p)),
+        openFull: p => navigate(p ? '#schema=' + encodeURIComponent(p) : '#schema'),
+        toast: (t, ms) => toast(t, ms),
+        onSaved: () => scheduleSync(),
+      });
+    }
+    if (moved || !rpSchema.visible) rpSchema.show(current, { autoAdd: false });
+    else rpSchema.refresh();
+  }
+  rpFor = current;
+}
+
+function setPanel(patch) {
+  Object.assign(rp, patch);
+  prefs.set('rpOpen', rp.open); prefs.set('rpTab', rp.tab); prefs.set('rpAll', rp.all);
+  rpFor = null;
+  renderPanel(true);
+}
+
 // ---------- Flowchart ----------
 let schema = null;
 function showSchema(focusPath) {
@@ -597,6 +654,7 @@ vault.onChange(() => {
     if (currentFile && !vault.get(currentFile)) route();
     if (!$('graphView').hidden && graph) updateGraph();
     if (schema) schema.refresh();
+    if (current) renderPanel();
   }, 150);
 });
 
@@ -609,6 +667,29 @@ function bind() {
   $('syncStatus').addEventListener('click', () => navigate('#settings'));
   $('menuBtn').addEventListener('click', () => { if (isPhone()) openDrawer(); else setSidebar(true); });
   $('hideSide').addEventListener('click', () => setSidebar(false));
+  $('panelBtn').addEventListener('click', () => setPanel({ open: !rp.open }));
+  $('rpClose').addEventListener('click', () => setPanel({ open: false }));
+  $('rpTabGraph').addEventListener('click', () => setPanel({ tab: 'graph' }));
+  $('rpTabSchema').addEventListener('click', () => setPanel({ tab: 'schema' }));
+  $('rpAll').addEventListener('change', e => setPanel({ all: e.target.checked }));
+  const setPanelWidth = px => { const w = Math.round(Math.min(700, Math.max(240, px))); $('app').style.setProperty('--rp-w', w + 'px'); return w; };
+  setPanelWidth(prefs.get('rpWidth', 340));
+  const rpGrip = $('rpResize');
+  rpGrip.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    rpGrip.setPointerCapture(e.pointerId);
+    rpGrip.classList.add('active');
+    const right = () => $('main').getBoundingClientRect().right;
+    const move = ev => setPanelWidth(right() - ev.clientX);
+    const up = ev => {
+      rpGrip.classList.remove('active');
+      prefs.set('rpWidth', setPanelWidth(right() - ev.clientX));
+      rpGrip.removeEventListener('pointermove', move);
+      rpGrip.removeEventListener('pointerup', up);
+    };
+    rpGrip.addEventListener('pointermove', move);
+    rpGrip.addEventListener('pointerup', up);
+  });
   $('app').classList.toggle('side-hidden', prefs.get('sideHidden', false));
   setSideWidth(prefs.get('sideWidth', 230));
   const grip = $('sideResize');
