@@ -1,6 +1,6 @@
 // Offline support: always try the network first so updates arrive at once,
 // and fall back to the saved copy when there is no connection.
-const CACHE = 'notes-app-v9';
+const CACHE = 'notes-app-v10';
 const SHELL = ['./', 'index.html', 'app.css', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
   'js/app.js', 'js/db.js', 'js/vault.js', 'js/markdown.js', 'js/graph.js', 'js/sync.js',
   'js/editor.js', 'js/schema.js', 'js/yadisk.js', 'js/media.js', 'js/calendar.js', 'js/calendar-data.js', 'js/push.js', 'vendor/codemirror.js'];
@@ -44,6 +44,8 @@ self.addEventListener('push', e => {
   try { d = e.data ? e.data.json() : {}; } catch { d = { title: 'Напоминание', body: e.data ? e.data.text() : '' }; }
   e.waitUntil(self.registration.showNotification(d.title || 'Напоминание', {
     body: d.body || '', tag: d.tag || undefined, renotify: Boolean(d.tag),
+    // Sound and vibration make Android show it as a pop-up at the top, not only in the shade.
+    silent: false, vibrate: [250, 120, 250], timestamp: Date.now(),
     icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', data: { url: d.url || '#calendar' },
   }));
 });

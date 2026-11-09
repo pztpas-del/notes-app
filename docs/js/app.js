@@ -544,7 +544,7 @@ async function notify(title, body, tag, url) {
   // With push on, the server sends the system notification; the app only shows the message.
   if (push.onHere()) return;
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
-  const opts = { body, tag, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', data: { url: url || '#calendar' }, renotify: true };
+  const opts = { body, tag, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', data: { url: url || '#calendar' }, renotify: true, silent: false, vibrate: [250, 120, 250] };
   try {
     const reg = await navigator.serviceWorker?.ready;
     if (reg) await reg.showNotification(title, opts); else new Notification(title, opts);
