@@ -1,9 +1,9 @@
 // Offline support: always try the network first so updates arrive at once,
 // and fall back to the saved copy when there is no connection.
-const CACHE = 'notes-app-v7';
+const CACHE = 'notes-app-v8';
 const SHELL = ['./', 'index.html', 'app.css', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
   'js/app.js', 'js/db.js', 'js/vault.js', 'js/markdown.js', 'js/graph.js', 'js/sync.js',
-  'js/editor.js', 'js/schema.js', 'js/yadisk.js', 'js/media.js', 'vendor/codemirror.js'];
+  'js/editor.js', 'js/schema.js', 'js/yadisk.js', 'js/media.js', 'js/calendar.js', 'js/calendar-data.js', 'vendor/codemirror.js'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -25,4 +25,15 @@ self.addEventListener('fetch', e => {
       .catch(() => caches.match(e.request, { ignoreSearch: true })
         .then(hit => hit || (e.request.mode === 'navigate' ? caches.match('index.html') : Response.error()))),
   );
+});
+
+// A tap on a reminder opens (or focuses) the app on that event.
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  const url = new URL(e.notification.data?.url || '#calendar', self.registration.scope).href;
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+    const win = list.find(c => c.url.startsWith(self.registration.scope));
+    if (win) { win.postMessage({ type: 'open', url }); return win.focus(); }
+    return self.clients.openWindow(url);
+  }));
 });

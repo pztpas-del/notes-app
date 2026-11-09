@@ -14,10 +14,10 @@ export const filename = p => p.split('/').pop();
 export const dirname = p => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
 export const isNote = p => /\.md$/i.test(p);
 // Text files are stored as text; everything else (attachments) as base64.
-export const isText = p => /\.(md|canvas)$/i.test(p);
+export const isText = p => /\.(md|canvas|json)$/i.test(p);
 export const IMAGE_RE = /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i;
 // Files that travel through sync: notes, the flowchart, common attachment types.
-export const isSynced = p => /\.(md|canvas|png|jpe?g|gif|webp|svg|bmp|avif|pdf|txt|mp3|m4a|ogg|wav|mp4|webm|docx?|xlsx?|pptx?|zip)$/i.test(p);
+export const isSynced = p => /\.(md|canvas|json|png|jpe?g|gif|webp|svg|bmp|avif|pdf|txt|mp3|m4a|ogg|wav|mp4|webm|docx?|xlsx?|pptx?|zip)$/i.test(p);
 // The flowchart lives in one JSON Canvas file (jsoncanvas.org), readable by other apps.
 export const SCHEMA_PATH = 'Схема.canvas';
 
@@ -74,7 +74,7 @@ export class Vault {
   }
 
   onChange(fn) { this.listeners.add(fn); }
-  changed() { this.idx = null; for (const fn of this.listeners) fn(); }
+  changed() { this.idx = null; this.rev = (this.rev || 0) + 1; for (const fn of this.listeners) fn(); }
 
   notes() { return [...this.files.values()].filter(f => !f.deleted && /\.md$/i.test(f.path)); }
   get(path) { const f = this.files.get(path); return f && !f.deleted ? f : null; }

@@ -6,6 +6,7 @@ import { createEditor } from './editor.js';
 import { SchemaView } from './schema.js';
 import { YaDisk } from './yadisk.js';
 import { MediaStore } from './media.js';
+import { CalendarView } from './calendar.js';
 
 const $ = id => document.getElementById(id);
 const prefs = {
@@ -64,13 +65,15 @@ const fileHash = p => '#file=' + encodeURIComponent(p);
 function navigate(hash) { if (location.hash === hash) route(); else location.hash = hash; }
 
 function showView(id, crumb) {
-  for (const v of ['noteView', 'fileView', 'graphView', 'schemaView', 'settingsView', 'emptyView']) $(v).hidden = v !== id;
+  for (const v of ['noteView', 'fileView', 'graphView', 'schemaView', 'calendarView', 'settingsView', 'emptyView']) $(v).hidden = v !== id;
   $('modeBtn').hidden = $('moreBtn').hidden = $('attachBtn').hidden = $('panelBtn').hidden = id !== 'noteView';
   if (id !== 'noteView') current = null;
   if (id !== 'fileView') currentFile = null;
   if (crumb !== undefined) $('crumb').textContent = crumb;
   if (graph) graph.show(id === 'graphView');
   if (schema && id !== 'schemaView') schema.hide();
+  if (id !== 'calendarView') calendar.hide();
+  $('openCalendar').classList.toggle('on', id === 'calendarView');
   if (id !== 'noteView') renderPanel();
 }
 
@@ -87,6 +90,7 @@ function route() {
     else showEmpty('Такого файла нет на этом устройстве. Возможно, он ещё не пришёл с GitHub.');
   } else if (h === '#graph') showGraph();
   else if (h === '#schema' || h.startsWith('#schema=')) showSchema(h.startsWith('#schema=') ? decodeURIComponent(h.slice(8)) : null);
+  else if (h === '#calendar' || h.startsWith('#calendar=')) showCalendar(h.startsWith('#calendar=') ? decodeURIComponent(h.slice(10)) : null);
   else if (h === '#settings') showSettings();
   else {
     const last = prefs.get('last', null);
@@ -438,7 +442,7 @@ function setSidebar(shown) {
   closeDrawer();
 }
 function setSideWidth(px) {
-  const w = Math.round(Math.min(420, Math.max(200, px)));
+  const w = Math.round(Math.min(420, Math.max(226, px)));
   $('app').style.setProperty('--side-w', w + 'px');
   return w;
 }
@@ -531,6 +535,26 @@ function setPanel(patch) {
 
 // ---------- Flowchart ----------
 let schema = null;
+// ---------- Calendar ----------
+// System notification (through the service worker, so it also shows when the
+// app is in the background) plus a message inside the app.
+async function notify(title, body, tag, url) {
+  toast(`🔔 ${title}: ${body}`, 9000);
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  const opts = { body, tag, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', data: { url: url || '#calendar' }, renotify: true };
+  try {
+    const reg = await navigator.serviceWorker?.ready;
+    if (reg) await reg.showNotification(title, opts); else new Notification(title, opts);
+  } catch { try { new Notification(title, opts); } catch { /* not allowed */ } }
+}
+const calendar = new CalendarView($('calendarView'), { vault, toast: (t, ms) => toast(t, ms), notify });
+
+function showCalendar(target) {
+  showView('calendarView', 'Календарь');
+  calendar.show(target);
+  if (target) history.replaceState(null, '', '#calendar');
+}
+
 function showSchema(focusPath) {
   const focus = focusPath && vault.get(focusPath) ? focusPath : null;
   showView('schemaView', 'Блок-схема');
@@ -752,6 +776,7 @@ vault.onChange(() => {
     else if (currentFile) refreshFileView();
     if (!$('graphView').hidden && graph) updateGraph();
     if (schema) schema.refresh();
+    calendar.refresh();
     if (current) renderPanel();
   }, 150);
 });
@@ -761,6 +786,7 @@ function bind() {
   $('newNote').addEventListener('click', () => newNote());
   $('openGraph').addEventListener('click', () => navigate('#graph'));
   $('openSchema').addEventListener('click', () => navigate('#schema'));
+  $('openCalendar').addEventListener('click', () => navigate('#calendar'));
   $('openSettings').addEventListener('click', () => navigate('#settings'));
   $('syncStatus').addEventListener('click', () => navigate('#settings'));
   $('menuBtn').addEventListener('click', () => { if (isPhone()) openDrawer(); else setSidebar(true); });
@@ -890,6 +916,8 @@ async function init() {
     toast('Яндекс Диск подключён. Картинки и файлы будут храниться там.', 7000);
     syncMedia().then(() => moveLegacyToDisk());
   } else if (yaBack === 'denied') toast('Доступ к Яндекс Диску не выдан.', 7000);
+  calendar.startReminders();
+  navigator.serviceWorker?.addEventListener('message', e => { if (e.data?.type === 'open' && e.data.url) location.hash = e.data.url.replace(/^[^#]*/, ''); });
   runSync();
   setInterval(() => { if (document.visibilityState === 'visible') runSync(); }, 60000);
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
