@@ -1,9 +1,9 @@
 // Offline support: always try the network first so updates arrive at once,
 // and fall back to the saved copy when there is no connection.
-const CACHE = 'notes-app-v2';
+const CACHE = 'notes-app-v3';
 const SHELL = ['./', 'index.html', 'app.css', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
   'js/app.js', 'js/db.js', 'js/vault.js', 'js/markdown.js', 'js/graph.js', 'js/sync.js',
-  'js/editor.js', 'vendor/codemirror.js'];
+  'js/editor.js', 'js/schema.js', 'vendor/codemirror.js'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));

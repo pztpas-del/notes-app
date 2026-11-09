@@ -3,7 +3,7 @@
 // changes as one commit. If another device pushed in between, start over.
 // Never loses text: when both sides changed a note, the GitHub version is kept
 // next to it as "<name> (конфликт <date>).md".
-import { isNote, isSynced } from './vault.js';
+import { isText, isSynced } from './vault.js';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -131,7 +131,7 @@ export class GitHubSync {
     }
     const texts = await mapLimit(fetches, 6, async f => {
       const raw = (await this.api('GET', `/git/blobs/${f.R}`, null, 'default')).content;
-      return isNote(f.p) ? fromBase64(raw) : raw.replace(/\s/g, '');
+      return isText(f.p) ? fromBase64(raw) : raw.replace(/\s/g, '');
     });
     fetches.forEach(({ p, R }, i) => {
       const text = texts[i];
@@ -152,7 +152,7 @@ export class GitHubSync {
     if (!sending.length) return 'done';
     // Attachments are uploaded as blobs first (base64); notes go inline as text.
     const blobShas = new Map();
-    await mapLimit(sending.filter(s => !s.deleted && !isNote(s.path)), 3, async s => {
+    await mapLimit(sending.filter(s => !s.deleted && !isText(s.path)), 3, async s => {
       const blob = await this.api('POST', '/git/blobs', { content: s.content, encoding: 'base64' });
       blobShas.set(s.path, blob.sha);
     });

@@ -13,9 +13,36 @@ export const basename = p => p.split('/').pop().replace(/\.md$/i, '');
 export const filename = p => p.split('/').pop();
 export const dirname = p => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
 export const isNote = p => /\.md$/i.test(p);
+// Text files are stored as text; everything else (attachments) as base64.
+export const isText = p => /\.(md|canvas)$/i.test(p);
 export const IMAGE_RE = /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i;
-// Files that travel through sync: notes plus common attachment types.
-export const isSynced = p => /\.(md|png|jpe?g|gif|webp|svg|bmp|avif|pdf|txt|mp3|m4a|ogg|wav|mp4|webm|docx?|xlsx?|pptx?|zip)$/i.test(p);
+// Files that travel through sync: notes, the flowchart, common attachment types.
+export const isSynced = p => /\.(md|canvas|png|jpe?g|gif|webp|svg|bmp|avif|pdf|txt|mp3|m4a|ogg|wav|mp4|webm|docx?|xlsx?|pptx?|zip)$/i.test(p);
+// The flowchart lives in one JSON Canvas file (jsoncanvas.org), readable by other apps.
+export const SCHEMA_PATH = 'Схема.canvas';
+
+// Parses the flowchart file into nodes (one per note) and parent→child edges.
+export function parseSchema(text) {
+  try {
+    const j = JSON.parse(text || '{}');
+    const nodes = (Array.isArray(j.nodes) ? j.nodes : [])
+      .filter(n => n && n.type === 'file' && typeof n.file === 'string' && n.id)
+      .map(n => ({ id: String(n.id), file: n.file, x: Number(n.x) || 0, y: Number(n.y) || 0, pinned: Boolean(n.pinned) }));
+    const ids = new Set(nodes.map(n => n.id));
+    const edges = (Array.isArray(j.edges) ? j.edges : [])
+      .filter(e => e && ids.has(e.fromNode) && ids.has(e.toNode) && e.fromNode !== e.toNode)
+      .map(e => ({ id: String(e.id || Math.random().toString(36).slice(2)), fromNode: e.fromNode, toNode: e.toNode }));
+    return { nodes, edges };
+  } catch {
+    return { nodes: [], edges: [] };
+  }
+}
+export function serializeSchema(s) {
+  return JSON.stringify({
+    nodes: s.nodes.map(n => ({ id: n.id, type: 'file', file: n.file, x: Math.round(n.x), y: Math.round(n.y), width: 200, height: 64, ...(n.pinned ? { pinned: true } : {}) })),
+    edges: s.edges.map(e => ({ id: e.id, fromNode: e.fromNode, fromSide: 'bottom', toNode: e.toNode, toSide: 'top', toEnd: 'arrow' })),
+  }, null, '\t') + '\n';
+}
 export const ATTACH_DIR = 'Вложения';
 const MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp', avif: 'image/avif', pdf: 'application/pdf', mp3: 'audio/mpeg', m4a: 'audio/mp4', ogg: 'audio/ogg', wav: 'audio/wav', mp4: 'video/mp4', webm: 'video/webm', txt: 'text/plain' };
 export const mimeOf = p => MIME[(p.split('.').pop() || '').toLowerCase()] || 'application/octet-stream';
@@ -55,7 +82,41 @@ export class Vault {
     const low = path.toLowerCase();
     return this.notes().find(n => n.path.toLowerCase() === low)?.path || null;
   }
-  attachments() { return [...this.files.values()].filter(f => !f.deleted && !isNote(f.path)); }
+  attachments() { return [...this.files.values()].filter(f => !f.deleted && !isText(f.path)); }
+
+  // ---------- Flowchart ----------
+  schema() {
+    const f = this.get(SCHEMA_PATH);
+    const text = f ? f.content : '';
+    if (!this.schemaCache || this.schemaCache.text !== text) this.schemaCache = { text, data: parseSchema(text) };
+    return this.schemaCache.data;
+  }
+  saveSchema(s) { this.write(SCHEMA_PATH, serializeSchema(s)); }
+  // Parent and child notes of a note in the flowchart.
+  schemaRelations(path) {
+    const s = this.schema();
+    const byId = new Map(s.nodes.map(n => [n.id, n.file]));
+    const mine = new Set(s.nodes.filter(n => n.file === path).map(n => n.id));
+    const parents = [], children = [];
+    for (const e of s.edges) {
+      if (mine.has(e.toNode)) parents.push(byId.get(e.fromNode));
+      if (mine.has(e.fromNode)) children.push(byId.get(e.toNode));
+    }
+    const uniq = a => [...new Set(a)].filter(p => p && this.get(p));
+    return { parents: uniq(parents), children: uniq(children) };
+  }
+  // Keeps the flowchart in step when a note is renamed (to = new path) or deleted (to = null).
+  updateSchemaNote(from, to) {
+    const s = this.schema();
+    if (!s.nodes.some(n => n.file === from)) return;
+    if (to) s.nodes.forEach(n => { if (n.file === from) n.file = to; });
+    else {
+      const gone = new Set(s.nodes.filter(n => n.file === from).map(n => n.id));
+      s.nodes = s.nodes.filter(n => !gone.has(n.id));
+      s.edges = s.edges.filter(e => !gone.has(e.fromNode) && !gone.has(e.toNode));
+    }
+    this.saveSchema(s);
+  }
   uniquePath(dir, name, ext = '.md') {
     const taken = new Set([...this.files.values()].filter(f => !f.deleted).map(f => f.path.toLowerCase()));
     for (let i = 1; ; i++) {
@@ -126,11 +187,12 @@ export class Vault {
     this.touch(path);
     this.changed();
   }
-  remove(path) {
+  remove(path, keepInSchema = false) {
     const f = this.files.get(path);
     if (!f) return;
     if (f.baseSha) { Object.assign(f, { deleted: true, dirty: true, content: '', mtime: Date.now() }); this.touch(path); }
     else this.drop(path);
+    if (isNote(path) && !keepInSchema) this.updateSchemaNote(path, null);
     this.changed();
   }
   // Moves a note and rewrites [[links]] that pointed at it. Returns the new path.
@@ -150,9 +212,10 @@ export class Vault {
       if (next !== n.content) rewrites.push([n.path, next]);
     }
     const content = note.content;
-    this.remove(oldPath);
+    this.remove(oldPath, true);
     this.write(newPath, content);
     for (const [p, c] of rewrites) this.write(p, c);
+    this.updateSchemaNote(oldPath, newPath);
     return newPath;
   }
 
@@ -230,6 +293,17 @@ export class Vault {
         seen.add(key); edges.push([from, to]);
         nodes.get(from).deg++; nodes.get(to).deg++;
       }
+    }
+    // Connections drawn in the flowchart count as links too.
+    const s = this.schema();
+    const byId = new Map(s.nodes.map(n => [n.id, n.file]));
+    for (const e of s.edges) {
+      const from = byId.get(e.fromNode), to = byId.get(e.toNode);
+      if (!nodes.has(from) || !nodes.has(to) || from === to) continue;
+      const key = from < to ? from + '\n' + to : to + '\n' + from;
+      if (seen.has(key)) continue;
+      seen.add(key); edges.push([from, to]);
+      nodes.get(from).deg++; nodes.get(to).deg++;
     }
     return { nodes: [...nodes.values()], edges };
   }

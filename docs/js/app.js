@@ -3,6 +3,7 @@ import { render } from './markdown.js';
 import { GraphView } from './graph.js';
 import { GitHubSync } from './sync.js';
 import { createEditor } from './editor.js';
+import { SchemaView } from './schema.js';
 
 const $ = id => document.getElementById(id);
 const prefs = {
@@ -56,12 +57,13 @@ const fileHash = p => '#file=' + encodeURIComponent(p);
 function navigate(hash) { if (location.hash === hash) route(); else location.hash = hash; }
 
 function showView(id, crumb) {
-  for (const v of ['noteView', 'fileView', 'graphView', 'settingsView', 'emptyView']) $(v).hidden = v !== id;
+  for (const v of ['noteView', 'fileView', 'graphView', 'schemaView', 'settingsView', 'emptyView']) $(v).hidden = v !== id;
   $('modeBtn').hidden = $('moreBtn').hidden = $('attachBtn').hidden = id !== 'noteView';
   if (id !== 'noteView') current = null;
   if (id !== 'fileView') currentFile = null;
   if (crumb !== undefined) $('crumb').textContent = crumb;
   if (graph) graph.show(id === 'graphView');
+  if (schema && id !== 'schemaView') schema.hide();
 }
 
 function route() {
@@ -76,6 +78,7 @@ function route() {
     if (vault.get(p)) showFile(p);
     else showEmpty('Такого файла нет на этом устройстве. Возможно, он ещё не пришёл с GitHub.');
   } else if (h === '#graph') showGraph();
+  else if (h === '#schema' || h.startsWith('#schema=')) showSchema(h.startsWith('#schema=') ? decodeURIComponent(h.slice(8)) : null);
   else if (h === '#settings') showSettings();
   else {
     const last = prefs.get('last', null);
@@ -138,6 +141,22 @@ function renderBacklinks() {
       el('span', { textContent: b.lines[0].trim().replace(/^[-*+>#]+\s*/, '') }));
     item.addEventListener('click', () => navigate(noteHash(b.path)));
     box.append(item);
+  }
+  const rel = vault.schemaRelations(current);
+  if (rel.parents.length || rel.children.length) {
+    const row = (label, paths) => {
+      if (!paths.length) return null;
+      const line = el('div', { className: 'schema-rel' }, el('span', { className: 'muted', textContent: label }));
+      for (const p of paths) {
+        const a = el('button', { type: 'button', className: 'chip', textContent: basename(p) });
+        a.addEventListener('click', () => navigate(noteHash(p)));
+        line.append(a);
+      }
+      return line;
+    };
+    const open = el('button', { type: 'button', className: 'link-btn', textContent: 'Открыть на схеме' });
+    open.addEventListener('click', () => navigate('#schema=' + encodeURIComponent(current)));
+    box.append(el('h2', { textContent: 'В блок-схеме' }), ...[row('Выше:', rel.parents), row('Ниже:', rel.children)].filter(Boolean), open);
   }
 }
 
@@ -390,6 +409,7 @@ function openMenu() {
   menu.replaceChildren(
     item('Новая заметка', () => { closeMenu(); newNote(); }),
     item('Показать на графе', () => { closeMenu(); navigate('#graph'); }),
+    item('Показать на блок-схеме', () => { closeMenu(); navigate('#schema=' + encodeURIComponent(current)); }),
     item('Удалить заметку', () => {
       menu.replaceChildren(
         el('p', { textContent: `Удалить «${name}»? После синхронизации она удалится и на других устройствах. На GitHub останется в истории изменений.` }),
@@ -409,6 +429,23 @@ function openMenu() {
 }
 
 // ---------- Graph ----------
+// ---------- Flowchart ----------
+let schema = null;
+function showSchema(focusPath) {
+  const focus = focusPath && vault.get(focusPath) ? focusPath : null;
+  showView('schemaView', 'Блок-схема');
+  if (!schema) {
+    schema = new SchemaView($('schemaView'), {
+      vault,
+      openNote: p => navigate(noteHash(p)),
+      toast: (t, ms) => toast(t, ms),
+      onSaved: () => scheduleSync(),
+    });
+  }
+  schema.show(focus);
+  if (focus) history.replaceState(null, '', '#schema');
+}
+
 function showGraph() {
   const focus = current || prefs.get('last', null);
   showView('graphView', 'Граф связей');
@@ -545,6 +582,7 @@ vault.onChange(() => {
     }
     if (currentFile && !vault.get(currentFile)) route();
     if (!$('graphView').hidden && graph) updateGraph();
+    if (schema) schema.refresh();
   }, 150);
 });
 
@@ -552,6 +590,7 @@ function bind() {
   window.addEventListener('hashchange', route);
   $('newNote').addEventListener('click', () => newNote());
   $('openGraph').addEventListener('click', () => navigate('#graph'));
+  $('openSchema').addEventListener('click', () => navigate('#schema'));
   $('openSettings').addEventListener('click', () => navigate('#settings'));
   $('syncStatus').addEventListener('click', () => navigate('#settings'));
   $('menuBtn').addEventListener('click', openDrawer);
