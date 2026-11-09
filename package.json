@@ -1,0 +1,21 @@
+{
+  "name": "notes-app",
+  "private": true,
+  "description": "Development tools only. The app itself (docs/) needs no build step except the bundled editor.",
+  "scripts": {
+    "serve": "node dev/serve.js",
+    "build:editor": "esbuild dev/codemirror-entry.js --bundle --format=esm --minify --outfile=docs/vendor/codemirror.js",
+    "icons": "node dev/make-icons.js"
+  },
+  "devDependencies": {
+    "@codemirror/autocomplete": "^6.18.0",
+    "@codemirror/commands": "^6.7.0",
+    "@codemirror/lang-markdown": "^6.3.0",
+    "@codemirror/language": "^6.10.0",
+    "@codemirror/search": "^6.5.0",
+    "@codemirror/state": "^6.4.0",
+    "@codemirror/view": "^6.34.0",
+    "@lezer/highlight": "^1.2.0",
+    "esbuild": "^0.24.0"
+  }
+}

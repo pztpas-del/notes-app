@@ -1,5 +1,6 @@
 // The vault: every note on this device, plus the link index built from them.
 // A file record: { path, content, baseSha, dirty, deleted, mtime }
+//   content  - the text of a note, or base64 bytes of an attachment (image, PDF…)
 //   baseSha  - git blob sha of the version last seen on GitHub (null = never synced)
 //   dirty    - changed here and not yet sent to GitHub
 //   deleted  - deleted here; kept as a marker until GitHub has the deletion
@@ -9,7 +10,15 @@ const LINK_RE = /\[\[([^\]\n|#]*)(#[^\]\n|]*)?(\|[^\]\n]*)?\]\]/g;
 const TAG_RE = /(^|\s)#([\p{L}\p{N}_\-/]*[\p{L}_\-/][\p{L}\p{N}_\-/]*)/gu;
 
 export const basename = p => p.split('/').pop().replace(/\.md$/i, '');
+export const filename = p => p.split('/').pop();
 export const dirname = p => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
+export const isNote = p => /\.md$/i.test(p);
+export const IMAGE_RE = /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i;
+// Files that travel through sync: notes plus common attachment types.
+export const isSynced = p => /\.(md|png|jpe?g|gif|webp|svg|bmp|avif|pdf|txt|mp3|m4a|ogg|wav|mp4|webm|docx?|xlsx?|pptx?|zip)$/i.test(p);
+export const ATTACH_DIR = 'Вложения';
+const MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp', avif: 'image/avif', pdf: 'application/pdf', mp3: 'audio/mpeg', m4a: 'audio/mp4', ogg: 'audio/ogg', wav: 'audio/wav', mp4: 'video/mp4', webm: 'video/webm', txt: 'text/plain' };
+export const mimeOf = p => MIME[(p.split('.').pop() || '').toLowerCase()] || 'application/octet-stream';
 export const stripCode = s => s.replace(/^(```|~~~)[\s\S]*?^\1\s*$/gm, '').replace(/`[^`\n]*`/g, '');
 
 // Cleans a typed title into a safe relative path without the extension.
@@ -28,6 +37,7 @@ export class Vault {
     this.toRemove = new Set();
     this.saveTimer = null;
     this.idx = null;
+    this.urls = new Map(); // path -> { content, url } object URLs for attachments
   }
 
   async load() {
@@ -45,11 +55,44 @@ export class Vault {
     const low = path.toLowerCase();
     return this.notes().find(n => n.path.toLowerCase() === low)?.path || null;
   }
-  uniquePath(dir, name) {
+  attachments() { return [...this.files.values()].filter(f => !f.deleted && !isNote(f.path)); }
+  uniquePath(dir, name, ext = '.md') {
+    const taken = new Set([...this.files.values()].filter(f => !f.deleted).map(f => f.path.toLowerCase()));
     for (let i = 1; ; i++) {
-      const p = (dir ? dir + '/' : '') + name + (i > 1 ? ' ' + i : '') + '.md';
-      if (!this.findPath(p)) return p;
+      const p = (dir ? dir + '/' : '') + name + (i > 1 ? ' ' + i : '') + ext;
+      if (!taken.has(p.toLowerCase())) return p;
     }
+  }
+
+  // ---------- Attachments ----------
+  // Finds an attachment by its path or by its file name, as ![[name.png]] does.
+  resolveFile(name) {
+    const t = String(name).trim().replace(/^\.?\//, '').toLowerCase();
+    if (!t) return null;
+    const files = this.attachments();
+    return (files.find(f => f.path.toLowerCase() === t) || files.find(f => filename(f.path).toLowerCase() === t.split('/').pop()))?.path || null;
+  }
+  // An object URL for showing an attachment; reused until the file changes.
+  fileUrl(name) {
+    const path = this.resolveFile(name);
+    if (!path) return null;
+    const f = this.files.get(path);
+    const cached = this.urls.get(path);
+    if (cached && cached.content === f.content) return cached.url;
+    if (cached) URL.revokeObjectURL(cached.url);
+    const bin = atob(f.content);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const url = URL.createObjectURL(new Blob([bytes], { type: mimeOf(path) }));
+    this.urls.set(path, { content: f.content, url });
+    return url;
+  }
+  writeFile(path, base64) {
+    const f = this.files.get(path) || { path, baseSha: null };
+    Object.assign(f, { content: base64, dirty: true, deleted: false, mtime: Date.now() });
+    this.files.set(path, f);
+    this.touch(path);
+    this.changed();
   }
 
   // ---------- Saving to this device ----------
@@ -123,7 +166,10 @@ export class Vault {
   addConflictCopy(path, content) {
     const d = new Date(), pad = n => String(n).padStart(2, '0');
     const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}-${pad(d.getMinutes())}`;
-    const copy = this.uniquePath(dirname(path), `${basename(path)} (конфликт ${stamp})`);
+    const name = filename(path);
+    const dot = name.lastIndexOf('.');
+    const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ''];
+    const copy = this.uniquePath(dirname(path), `${stem} (конфликт ${stamp})`, ext);
     this.files.set(copy, { path: copy, content, baseSha: null, dirty: true, deleted: false, mtime: Date.now() });
     this.touch(copy);
     return copy;

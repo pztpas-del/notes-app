@@ -35,6 +35,9 @@
         <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
       <span id="crumb" class="crumb"></span>
       <span class="spacer"></span>
+      <button class="icon" id="attachBtn" hidden title="Вставить картинку или файл" aria-label="Вставить картинку или файл">
+        <svg viewBox="0 0 24 24"><path d="M20 11.5l-7.8 7.8a5 5 0 01-7.1-7.1l8.5-8.5a3.3 3.3 0 014.7 4.7l-8.5 8.5a1.7 1.7 0 01-2.4-2.4l7.8-7.8"/></svg></button>
+      <input type="file" id="fileInput" multiple hidden accept="image/*,application/pdf,.txt,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,audio/*,video/mp4,video/webm">
       <button class="icon" id="modeBtn" hidden></button>
       <div class="menu-wrap">
         <button class="icon" id="moreBtn" hidden aria-label="Ещё" aria-haspopup="true" aria-expanded="false">
@@ -47,13 +50,14 @@
       <div class="note">
         <input id="title" class="title" aria-label="Название заметки" autocomplete="off" spellcheck="false">
         <p id="titleError" class="error" hidden></p>
-        <div class="editor-wrap">
-          <textarea id="editor" spellcheck="true" aria-label="Текст заметки" placeholder="Начните писать. [[Название]] создаёт ссылку на другую заметку, #тег добавляет тег."></textarea>
-          <ul id="suggest" class="suggest" role="listbox" hidden></ul>
-        </div>
+        <div id="editor" class="editor"></div>
         <article id="preview" class="md" hidden></article>
         <section id="backlinks" class="backlinks"></section>
       </div>
+    </section>
+
+    <section id="fileView" class="view" hidden>
+      <div class="note" id="fileBody"></div>
     </section>
 
     <section id="graphView" class="view graph-view" hidden>

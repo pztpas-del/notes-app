@@ -3,6 +3,8 @@
 // changes as one commit. If another device pushed in between, start over.
 // Never loses text: when both sides changed a note, the GitHub version is kept
 // next to it as "<name> (конфликт <date>).md".
+import { isNote, isSynced } from './vault.js';
+
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
@@ -97,7 +99,7 @@ export class GitHubSync {
       const tree = await this.api('GET', `/git/trees/${commit.tree.sha}?recursive=1`, null, 'default');
       if (tree.truncated) throw new SyncError('В хранилище слишком много файлов для синхронизации.', 'toolarge');
       const remote = new Map();
-      for (const e of tree.tree) if (e.type === 'blob' && /\.md$/i.test(e.path)) remote.set(e.path, e.sha);
+      for (const e of tree.tree) if (e.type === 'blob' && isSynced(e.path)) remote.set(e.path, e.sha);
 
       await this.pull(remote, result);
       const pushed = await this.push(headSha, commit.tree.sha, result);
@@ -111,7 +113,7 @@ export class GitHubSync {
     const v = this.vault;
     const fetches = [];
     for (const p of new Set([...remote.keys(), ...v.files.keys()])) {
-      if (!/\.md$/i.test(p)) continue;
+      if (!isSynced(p)) continue;
       const L = v.files.get(p), R = remote.get(p);
       if (!L) { fetches.push({ p, R }); continue; }
       if (L.deleted) {
@@ -127,7 +129,10 @@ export class GitHubSync {
       }
       if (R !== L.baseSha) fetches.push({ p, R });
     }
-    const texts = await mapLimit(fetches, 6, async f => fromBase64((await this.api('GET', `/git/blobs/${f.R}`, null, 'default')).content));
+    const texts = await mapLimit(fetches, 6, async f => {
+      const raw = (await this.api('GET', `/git/blobs/${f.R}`, null, 'default')).content;
+      return isNote(f.p) ? fromBase64(raw) : raw.replace(/\s/g, '');
+    });
     fetches.forEach(({ p, R }, i) => {
       const text = texts[i];
       const L = v.files.get(p); // re-read: the note may have been edited while downloading
@@ -143,12 +148,21 @@ export class GitHubSync {
     const snap = [...v.files.values()].filter(f => f.dirty)
       .map(f => ({ path: f.path, deleted: Boolean(f.deleted), content: f.content, baseSha: f.baseSha }));
     for (const s of snap) if (s.deleted && !s.baseSha) v.drop(s.path);
-    const entries = snap.filter(s => !s.deleted || s.baseSha).map(s => s.deleted
+    const sending = snap.filter(s => !s.deleted || s.baseSha);
+    if (!sending.length) return 'done';
+    // Attachments are uploaded as blobs first (base64); notes go inline as text.
+    const blobShas = new Map();
+    await mapLimit(sending.filter(s => !s.deleted && !isNote(s.path)), 3, async s => {
+      const blob = await this.api('POST', '/git/blobs', { content: s.content, encoding: 'base64' });
+      blobShas.set(s.path, blob.sha);
+    });
+    const entries = sending.map(s => s.deleted
       ? { path: s.path, mode: '100644', type: 'blob', sha: null }
-      : { path: s.path, mode: '100644', type: 'blob', content: s.content });
-    if (!entries.length) return 'done';
+      : blobShas.has(s.path)
+        ? { path: s.path, mode: '100644', type: 'blob', sha: blobShas.get(s.path) }
+        : { path: s.path, mode: '100644', type: 'blob', content: s.content });
 
-    const names = entries.map(e => e.path.replace(/\.md$/i, ''));
+    const names = entries.map(e => e.path.split('/').pop().replace(/\.md$/i, ''));
     const message = `Заметки: ${names.slice(0, 5).join(', ')}${names.length > 5 ? ` и ещё ${names.length - 5}` : ''}`;
     const tree = await this.api('POST', '/git/trees', { base_tree: treeSha, tree: entries });
     const commit = await this.api('POST', '/git/commits', { message, tree: tree.sha, parents: [headSha] });
@@ -162,7 +176,7 @@ export class GitHubSync {
       const f = v.files.get(s.path);
       if (!f) continue;
       if (s.deleted) { if (f.deleted) v.drop(s.path); continue; }
-      f.baseSha = await gitBlobSha(s.content);
+      f.baseSha = blobShas.get(s.path) || await gitBlobSha(s.content);
       if (!f.deleted && f.content === s.content) f.dirty = false;
       v.touch(s.path);
     }

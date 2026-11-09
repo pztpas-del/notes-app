@@ -1,7 +1,8 @@
-import { Vault, basename, dirname, cleanTitle } from './vault.js';
-import { render, slug } from './markdown.js';
+import { Vault, basename, filename, dirname, cleanTitle, isNote, IMAGE_RE, ATTACH_DIR } from './vault.js';
+import { render } from './markdown.js';
 import { GraphView } from './graph.js';
 import { GitHubSync } from './sync.js';
+import { createEditor } from './editor.js';
 
 const $ = id => document.getElementById(id);
 const prefs = {
@@ -20,20 +21,45 @@ const vault = new Vault();
 let settings = prefs.get('sync', {});
 const sync = new GitHubSync(vault, () => settings);
 let current = null;
+let currentFile = null;
 let mode = prefs.get('mode', 'edit');
 const collapsed = new Set(prefs.get('collapsed', []));
 let syncState = { state: 'idle', at: null, error: '' };
 let graph = null;
-window.__notes = { vault, sync }; // handy for debugging from the browser console
+const ed = createEditor($('editor'), {
+  onChange(text) {
+    if (!current) return;
+    vault.write(current, text);
+    scheduleSync();
+  },
+  resolveNote: t => vault.resolve(t),
+  fileUrl: name => vault.fileUrl(name),
+  openLink: (target, heading) => openOrCreate(target, heading),
+  openFile: name => { const p = vault.resolveFile(name); if (p) navigate(fileHash(p)); },
+  openTag: tag => { $('search').value = '#' + tag; renderTree(); openDrawer(); },
+  linkTargets(embed) {
+    const notes = vault.notes().filter(n => n.path !== current).map(n => {
+      const name = basename(n.path);
+      const twin = vault.notes().some(o => o !== n && basename(o.path).toLowerCase() === name.toLowerCase());
+      return { name, detail: dirname(n.path), insert: twin ? n.path.replace(/\.md$/i, '') : name };
+    });
+    const files = vault.attachments().map(f => ({ name: filename(f.path), detail: dirname(f.path), insert: filename(f.path), file: true }));
+    return embed ? [...files, ...notes] : [...notes, ...files];
+  },
+  saveFiles: files => saveFiles(files),
+});
+window.__notes = { vault, sync, ed }; // handy for debugging from the browser console
 
 // ---------- Views and routing ----------
 const noteHash = p => '#note=' + encodeURIComponent(p);
+const fileHash = p => '#file=' + encodeURIComponent(p);
 function navigate(hash) { if (location.hash === hash) route(); else location.hash = hash; }
 
 function showView(id, crumb) {
-  for (const v of ['noteView', 'graphView', 'settingsView', 'emptyView']) $(v).hidden = v !== id;
-  $('modeBtn').hidden = $('moreBtn').hidden = id !== 'noteView';
-  if (id !== 'noteView') { current = null; closeSuggest(); }
+  for (const v of ['noteView', 'fileView', 'graphView', 'settingsView', 'emptyView']) $(v).hidden = v !== id;
+  $('modeBtn').hidden = $('moreBtn').hidden = $('attachBtn').hidden = id !== 'noteView';
+  if (id !== 'noteView') current = null;
+  if (id !== 'fileView') currentFile = null;
   if (crumb !== undefined) $('crumb').textContent = crumb;
   if (graph) graph.show(id === 'graphView');
 }
@@ -45,6 +71,10 @@ function route() {
     const p = decodeURIComponent(h.slice(6));
     if (vault.get(p)) showNote(p);
     else showEmpty('Такой заметки нет на этом устройстве. Возможно, она ещё не пришла с GitHub.');
+  } else if (h.startsWith('#file=')) {
+    const p = decodeURIComponent(h.slice(6));
+    if (vault.get(p)) showFile(p);
+    else showEmpty('Такого файла нет на этом устройстве. Возможно, он ещё не пришёл с GitHub.');
   } else if (h === '#graph') showGraph();
   else if (h === '#settings') showSettings();
   else {
@@ -76,19 +106,19 @@ function showNote(path) {
 function renderNote(switching = false) {
   const note = vault.get(current);
   if (!note) return;
-  const title = $('title'), editor = $('editor');
+  const title = $('title');
   if (document.activeElement !== title || switching) title.value = basename(current);
   $('crumb').textContent = dirname(current).split('/').join(' / ');
-  if (editor.value !== note.content) {
-    const { selectionStart: s, selectionEnd: e } = editor;
-    editor.value = note.content;
-    if (!switching) editor.setSelectionRange(Math.min(s, note.content.length), Math.min(e, note.content.length));
+  if (switching) { ed.load(note.content); linkSig = vaultSignature(); }
+  else {
+    ed.setDoc(note.content);
+    const sig = vaultSignature();
+    if (sig !== linkSig) { linkSig = sig; ed.refresh(); }
   }
   const reading = mode === 'read';
-  editor.parentElement.hidden = reading;
+  $('editor').hidden = reading;
   $('preview').hidden = !reading;
-  if (reading) $('preview').innerHTML = render(note.content, { resolve: t => vault.resolve(t) });
-  else autosize();
+  if (reading) $('preview').innerHTML = render(note.content, { resolve: t => vault.resolve(t), fileUrl: n => vault.fileUrl(n) });
   const btn = $('modeBtn');
   btn.title = reading ? 'Редактировать (Ctrl+E)' : 'Режим чтения (Ctrl+E)';
   btn.setAttribute('aria-label', btn.title);
@@ -115,16 +145,108 @@ function setMode(next, focus = true) {
   mode = next;
   prefs.set('mode', mode);
   renderNote();
-  if (focus && mode === 'edit') $('editor').focus();
+  if (focus && mode === 'edit') ed.focus();
 }
 
-function autosize() {
-  const ed = $('editor'), view = $('noteView');
-  const keep = view.scrollTop;
-  ed.style.height = 'auto';
-  ed.style.height = ed.scrollHeight + 'px';
-  view.scrollTop = keep;
+// Which notes and files exist; when it changes, links and images in the editor are redrawn.
+let linkSig = '';
+function vaultSignature() {
+  return vault.notes().map(n => n.path).sort().join('\n') + '\n|\n' +
+    vault.attachments().map(f => f.path + ':' + f.content.length).sort().join('\n');
 }
+
+// ---------- Attachments ----------
+const pad2 = n => String(n).padStart(2, '0');
+function stamp() {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
+}
+const blobToBase64 = blob => new Promise((resolve, reject) => {
+  const r = new FileReader();
+  r.onload = () => resolve(String(r.result).split(',')[1] || '');
+  r.onerror = () => reject(r.error);
+  r.readAsDataURL(blob);
+});
+
+// Photos from a phone are big: shrink to at most 2000 px and save as JPEG.
+// Small PNG screenshots stay PNG so text in them stays sharp.
+async function shrinkImage(file) {
+  if (!/^image\/(jpeg|png|webp|heic|heif|bmp)$/i.test(file.type)) return null;
+  try {
+    const bmp = await createImageBitmap(file);
+    const scale = Math.min(1, 2000 / Math.max(bmp.width, bmp.height));
+    const keepPng = file.type === 'image/png' && file.size < 1.5e6 && scale === 1;
+    if (keepPng || (scale === 1 && file.size < 1e6 && file.type === 'image/jpeg')) return null;
+    const c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * scale);
+    c.height = Math.round(bmp.height * scale);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.85));
+    return blob ? { blob, ext: 'jpg' } : null;
+  } catch {
+    return null;
+  }
+}
+
+// Saves files into the attachments folder and returns ![[...]] lines to insert.
+async function saveFiles(files) {
+  const out = [];
+  for (const file of files) {
+    let blob = file;
+    let ext = (file.name.match(/\.([^.]+)$/)?.[1] || (file.type.split('/')[1] || 'bin')).toLowerCase().replace('jpeg', 'jpg');
+    const shrunk = await shrinkImage(file);
+    if (shrunk) { blob = shrunk.blob; ext = shrunk.ext; }
+    if (blob.size > 25 * 1024 * 1024) { toast(`Файл «${file.name}» больше 25 МБ, такие не сохраняются.`, 8000); continue; }
+    let stem = cleanTitle(file.name.replace(/\.[^.]+$/, '')).replace(/\//g, ' ');
+    if (!stem || /^(image|img|photo|screenshot|изображение)$/i.test(stem) || /^(IMG|PXL|DSC)[_-]?\d/i.test(stem)) {
+      stem = (file.type.startsWith('image/') ? 'Изображение ' : 'Файл ') + stamp();
+    }
+    const path = vault.uniquePath(ATTACH_DIR, stem, '.' + ext);
+    vault.writeFile(path, await blobToBase64(blob));
+    const twin = vault.attachments().some(f => f.path !== path && filename(f.path).toLowerCase() === filename(path).toLowerCase());
+    out.push(`![[${twin ? path : filename(path)}]]`);
+  }
+  if (out.length) scheduleSync();
+  return out;
+}
+
+function showFile(path) {
+  showView('fileView', dirname(path).split('/').join(' / '));
+  currentFile = path;
+  const f = vault.get(path);
+  const box = $('fileBody');
+  const url = vault.fileUrl(path);
+  const size = Math.round(f.content.length * 0.75 / 1024);
+  const name = filename(path);
+  const using = vault.notes().filter(n => n.content.includes(name)).map(n => n.path);
+  box.replaceChildren(
+    el('h1', { className: 'file-title', textContent: name }),
+    el('p', { className: 'muted', textContent: `${size > 1024 ? (size / 1024).toFixed(1) + ' МБ' : size + ' КБ'} · ${path}` }));
+  if (IMAGE_RE.test(path)) box.append(el('img', { className: 'file-preview', src: url, alt: name }));
+  else box.append(el('p', {}, el('a', { href: url, target: '_blank', rel: 'noopener', textContent: 'Открыть файл' })));
+  if (using.length) {
+    const list = el('div', { className: 'backlinks' }, el('h2', { textContent: 'Используется в заметках' }));
+    for (const p of using) {
+      const b = el('button', { type: 'button', className: 'item' }, el('b', { textContent: basename(p) }));
+      b.addEventListener('click', () => navigate(noteHash(p)));
+      list.append(b);
+    }
+    box.append(list);
+  }
+  const actions = el('div', { className: 'row file-actions' });
+  const del = el('button', { type: 'button', className: 'danger-text', textContent: 'Удалить файл' });
+  del.addEventListener('click', () => {
+    actions.replaceChildren(
+      el('span', { textContent: using.length ? `Файл используется в заметках (${using.length}). Удалить всё равно?` : 'Удалить файл? После синхронизации он удалится и на других устройствах.' }),
+      Object.assign(el('button', { type: 'button', className: 'danger-text', textContent: 'Удалить' }), {
+        onclick: () => { vault.remove(path); toast(`Файл «${name}» удалён`); scheduleSync(); history.back(); },
+      }),
+      Object.assign(el('button', { type: 'button', textContent: 'Отмена' }), { onclick: () => showFile(path) }));
+  });
+  actions.append(del);
+  box.append(actions);
+}
+
 
 function newNote(name = 'Без названия') {
   const p = vault.uniquePath('', name);
@@ -149,7 +271,7 @@ function openOrCreate(target, heading) {
   vault.write(path, '');
   mode = 'edit'; prefs.set('mode', mode);
   navigate(noteHash(path));
-  requestAnimationFrame(() => $('editor').focus());
+  requestAnimationFrame(() => ed.focus());
   toast(`Создана заметка «${basename(path)}»`);
   scheduleSync();
 }
@@ -189,96 +311,6 @@ function toggleTask(line) {
   scheduleSync();
 }
 
-// ---------- [[ suggestions and list editing ----------
-let sug = { items: [], sel: 0, start: 0 };
-
-function caretCoords(ta, pos) {
-  const cs = getComputedStyle(ta);
-  const div = document.createElement('div');
-  for (const p of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'paddingTop', 'paddingLeft', 'paddingRight', 'tabSize']) div.style[p] = cs[p];
-  Object.assign(div.style, { position: 'absolute', visibility: 'hidden', whiteSpace: 'pre-wrap', overflowWrap: 'break-word', width: ta.clientWidth + 'px', top: '0', left: '-9999px' });
-  div.textContent = ta.value.slice(0, pos);
-  const mark = el('span', { textContent: '​' });
-  div.append(mark);
-  document.body.append(div);
-  const out = { top: mark.offsetTop, left: mark.offsetLeft, lh: parseFloat(cs.lineHeight) || 24 };
-  div.remove();
-  return out;
-}
-
-function updateSuggest() {
-  const ed = $('editor');
-  const pos = ed.selectionStart;
-  if (pos !== ed.selectionEnd) return closeSuggest();
-  const m = ed.value.slice(Math.max(0, pos - 120), pos).match(/\[\[([^[\]\n|#]*)$/);
-  if (!m) return closeSuggest();
-  const q = m[1].trim().toLowerCase();
-  const names = vault.notes().filter(n => n.path !== current).map(n => ({ path: n.path, name: basename(n.path) }));
-  let items = names.filter(x => x.name.toLowerCase().includes(q) || x.path.toLowerCase().includes(q))
-    .sort((a, b) => (b.name.toLowerCase().startsWith(q) - a.name.toLowerCase().startsWith(q)) || a.name.localeCompare(b.name, 'ru'))
-    .slice(0, 8);
-  if (q && !names.some(x => x.name.toLowerCase() === q)) items.push({ create: true, name: m[1].trim() });
-  if (!items.length) return closeSuggest();
-  sug = { items, sel: 0, start: pos - m[1].length };
-  const list = $('suggest');
-  list.replaceChildren(...items.map((it, i) => {
-    const li = el('li', { role: 'option' }, it.create ? `Создать «${it.name}»` : it.name);
-    if (!it.create && dirname(it.path)) li.append(el('small', { textContent: dirname(it.path) }));
-    li.setAttribute('aria-selected', String(i === 0));
-    li.addEventListener('mousedown', e => { e.preventDefault(); pickSuggest(i); });
-    return li;
-  }));
-  const c = caretCoords(ed, pos);
-  list.hidden = false;
-  list.style.top = c.top + c.lh + 4 + 'px';
-  list.style.left = Math.max(0, Math.min(c.left, ed.clientWidth - list.offsetWidth)) + 'px';
-}
-function closeSuggest() { $('suggest').hidden = true; sug.items = []; }
-function moveSuggest(d) {
-  sug.sel = (sug.sel + d + sug.items.length) % sug.items.length;
-  [...$('suggest').children].forEach((li, i) => li.setAttribute('aria-selected', String(i === sug.sel)));
-}
-function pickSuggest(i) {
-  const ed = $('editor'), it = sug.items[i];
-  if (!it) return;
-  let name = it.name;
-  if (!it.create && vault.notes().filter(n => basename(n.path).toLowerCase() === name.toLowerCase()).length > 1) name = it.path.replace(/\.md$/i, '');
-  const pos = ed.selectionStart;
-  const hasClose = ed.value.slice(pos).startsWith(']]');
-  ed.setRangeText(name + (hasClose ? '' : ']]'), sug.start, pos, 'end');
-  if (hasClose) ed.selectionStart = ed.selectionEnd = ed.selectionEnd + 2;
-  closeSuggest();
-  ed.dispatchEvent(new Event('input'));
-}
-
-// Enter inside a list continues it; Enter on an empty item ends the list.
-function continueList(ed) {
-  const pos = ed.selectionStart;
-  if (pos !== ed.selectionEnd) return false;
-  const lineStart = ed.value.lastIndexOf('\n', pos - 1) + 1;
-  const line = ed.value.slice(lineStart, pos);
-  const m = line.match(/^(\s*)([-*+]|(\d+)([.)]))(\s+)(\[[ xX]\]\s+)?(.*)$/);
-  if (!m) return false;
-  if (!m[7].trim() && ed.value.slice(pos, ed.value.indexOf('\n', pos) === -1 ? undefined : ed.value.indexOf('\n', pos)).trim() === '') {
-    ed.setRangeText('', lineStart, pos, 'end');
-    return true;
-  }
-  const marker = m[3] ? `${Number(m[3]) + 1}${m[4]}` : m[2];
-  ed.setRangeText(`\n${m[1]}${marker}${m[5]}${m[6] ? '[ ] ' : ''}`, pos, pos, 'end');
-  return true;
-}
-
-function linkAtCaret(ed) {
-  const pos = ed.selectionStart;
-  const start = ed.value.lastIndexOf('\n', pos - 1) + 1;
-  const end = ed.value.indexOf('\n', pos);
-  const line = ed.value.slice(start, end === -1 ? undefined : end);
-  for (const m of line.matchAll(/\[\[([^\]\n]+?)\]\]/g)) {
-    if (pos >= start + m.index && pos <= start + m.index + m[0].length) return m[1];
-  }
-  return null;
-}
-
 // ---------- Sidebar ----------
 function renderTree() {
   const box = $('tree');
@@ -307,7 +339,7 @@ function renderTree() {
   }
 
   const root = { folders: new Map(), notes: [] };
-  for (const n of notes) {
+  for (const n of [...notes, ...vault.attachments()]) {
     const parts = n.path.split('/');
     parts.pop();
     let node = root;
@@ -333,10 +365,13 @@ function renderTree() {
       parent.append(b, kids);
       draw(child, path + '/', kids);
     }
-    for (const n of node.notes.sort((a, b) => basename(a.path).localeCompare(basename(b.path), 'ru'))) {
-      const b = el('button', { type: 'button', className: n.path === current ? 'active' : '' }, el('span', { className: 'name', textContent: basename(n.path) }));
+    const sorted = node.notes.sort((a, b) => (isNote(b.path) - isNote(a.path)) || basename(a.path).localeCompare(basename(b.path), 'ru'));
+    for (const n of sorted) {
+      const note = isNote(n.path);
+      const b = el('button', { type: 'button', className: (n.path === current || n.path === currentFile ? 'active' : '') + (note ? '' : ' attachment') },
+        el('span', { className: 'name', textContent: note ? basename(n.path) : filename(n.path) }));
       if (n.dirty && sync.configured()) b.append(el('span', { className: 'dot', title: 'Ещё не отправлено на GitHub' }));
-      b.addEventListener('click', () => navigate(noteHash(n.path)));
+      b.addEventListener('click', () => navigate(note ? noteHash(n.path) : fileHash(n.path)));
       parent.append(b);
     }
   };
@@ -508,6 +543,7 @@ vault.onChange(() => {
       if (!vault.get(current)) route();
       else renderNote();
     }
+    if (currentFile && !vault.get(currentFile)) route();
     if (!$('graphView').hidden && graph) updateGraph();
   }, 150);
 });
@@ -544,41 +580,9 @@ function bind() {
   const title = $('title');
   title.addEventListener('change', renameCurrent);
   title.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); renameCurrent(); if (mode === 'edit') $('editor').focus(); }
+    if (e.key === 'Enter') { e.preventDefault(); renameCurrent(); if (mode === 'edit') ed.focus(); }
     if (e.key === 'Escape') { title.value = basename(current); title.blur(); }
   });
-
-  const ed = $('editor');
-  ed.addEventListener('input', () => {
-    if (!current) return;
-    vault.write(current, ed.value);
-    autosize();
-    updateSuggest();
-    scheduleSync();
-  });
-  ed.addEventListener('keydown', e => {
-    if (sug.items.length && !$('suggest').hidden) {
-      if (e.key === 'ArrowDown') { e.preventDefault(); moveSuggest(1); return; }
-      if (e.key === 'ArrowUp') { e.preventDefault(); moveSuggest(-1); return; }
-      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickSuggest(sug.sel); return; }
-      if (e.key === 'Escape') { e.preventDefault(); closeSuggest(); return; }
-    }
-    if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing) {
-      if (continueList(ed)) { e.preventDefault(); ed.dispatchEvent(new Event('input')); }
-    } else if (e.key === 'Tab' && !e.ctrlKey && !e.altKey) {
-      e.preventDefault();
-      ed.setRangeText('\t', ed.selectionStart, ed.selectionEnd, 'end');
-      ed.dispatchEvent(new Event('input'));
-    }
-  });
-  ed.addEventListener('click', e => {
-    if (e.ctrlKey || e.metaKey) {
-      const link = linkAtCaret(ed);
-      if (link) { const [t, h] = link.split('|')[0].split('#'); openOrCreate(t.trim(), h ? slug(h) : ''); }
-    }
-    updateSuggest();
-  });
-  ed.addEventListener('blur', () => setTimeout(closeSuggest, 100));
 
   $('preview').addEventListener('click', e => {
     const box = e.target.closest('input[type="checkbox"][data-line]');
@@ -586,7 +590,17 @@ function bind() {
     const a = e.target.closest('a');
     if (!a) return;
     if (a.classList.contains('wikilink')) { e.preventDefault(); openOrCreate(a.dataset.target, a.dataset.heading); }
+    else if (a.classList.contains('file-link')) { e.preventDefault(); const p = vault.resolveFile(a.dataset.file); if (p) navigate(fileHash(p)); }
     else if (a.classList.contains('tag')) { e.preventDefault(); $('search').value = '#' + a.dataset.tag; renderTree(); openDrawer(); }
+  });
+
+  $('attachBtn').addEventListener('click', () => $('fileInput').click());
+  $('fileInput').addEventListener('change', async e => {
+    const files = [...e.target.files];
+    e.target.value = '';
+    if (!files.length || !current) return;
+    if (mode === 'read') setMode('edit', false);
+    await ed.insertFiles(files);
   });
 
   document.addEventListener('keydown', e => {
@@ -605,7 +619,6 @@ function bind() {
     else { vault.flush(); if (vault.pendingCount()) runSync(); }
   });
   window.addEventListener('pagehide', () => vault.flush());
-  window.addEventListener('resize', () => { if (current && mode === 'edit') autosize(); });
 }
 
 async function init() {

@@ -87,6 +87,10 @@ function mock(req, res, url, body) {
     const b = store.blobs.get(r[1]); if (!b) return send(res, 404, { message: 'Not Found' });
     return send(res, 200, { sha: r[1], encoding: 'base64', content: b.toString('base64').replace(/(.{60})/g, '$1\n'), size: b.length });
   }
+  if (rest === '/git/blobs' && req.method === 'POST') {
+    const buf = Buffer.from(body.content || '', body.encoding === 'base64' ? 'base64' : 'utf8');
+    return send(res, 201, { sha: putBlob(buf) });
+  }
   if (rest === '/git/trees' && req.method === 'POST') {
     const base = body.base_tree ? store.trees.get(body.base_tree) : new Map();
     if (!base) return send(res, 422, { message: 'Invalid base_tree' });

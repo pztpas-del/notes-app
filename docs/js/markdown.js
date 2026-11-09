@@ -15,13 +15,26 @@ function wikilink(inner, ctx) {
     `${heading ? ` data-heading="${attr(slug(heading))}"` : ''}>${esc(text.trim())}</a>`;
 }
 
+// ![[file]]: an image is shown, another file becomes a link, a note becomes a link.
+function embed(inner, ctx) {
+  const name = inner.split('|')[0].trim();
+  const url = ctx.fileUrl ? ctx.fileUrl(name) : null;
+  if (url && /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(name)) return `<img alt="${attr(name)}" src="${attr(url)}" loading="lazy">`;
+  if (url) return `<a class="file-link" href="#" data-file="${attr(name)}">📎 ${esc(name)}</a>`;
+  if (/\.(png|jpe?g|gif|webp|svg|bmp|avif|pdf)$/i.test(name)) return `<span class="missing-file">Файл «${esc(name)}» не найден</span>`;
+  return wikilink(inner, ctx);
+}
+
 function inline(src, ctx) {
   const slots = [];
   const keep = html => `\u0000${slots.push(html) - 1}\u0000`;
   let s = src
     .replace(/`([^`\n]+)`/g, (_, c) => keep(`<code>${esc(c)}</code>`))
-    .replace(/!?\[\[([^\]\n]+?)\]\]/g, (_, inner) => keep(wikilink(inner, ctx)))
-    .replace(/!\[([^\]\n]*)\]\(([^)\s]+)\)/g, (m, alt, url) => safeUrl(url) ? keep(`<img alt="${attr(alt)}" src="${attr(url)}" loading="lazy">`) : m)
+    .replace(/(!?)\[\[([^\]\n]+?)\]\]/g, (_, bang, inner) => keep(bang ? embed(inner, ctx) : wikilink(inner, ctx)))
+    .replace(/!\[([^\]\n]*)\]\(([^)\s]+)\)/g, (m, alt, url) => {
+      const local = ctx.fileUrl ? ctx.fileUrl(decodeURIComponent(url)) : null;
+      return local || safeUrl(url) ? keep(`<img alt="${attr(alt)}" src="${attr(local || url)}" loading="lazy">`) : m;
+    })
     .replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (m, text, url) => safeUrl(url) ? keep(`<a href="${attr(url)}" target="_blank" rel="noopener noreferrer">${esc(text)}</a>`) : m)
     .replace(/(^|[\s(])(https?:\/\/[^\s<>()]+[^\s<>().,;:!?])/g, (_, pre, url) => pre + keep(`<a href="${attr(url)}" target="_blank" rel="noopener noreferrer">${esc(url)}</a>`));
   s = esc(s)
