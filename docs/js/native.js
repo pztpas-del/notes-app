@@ -8,7 +8,12 @@ const cap = () => window.Capacitor;
 export const isNativeApp = () => Boolean(cap()?.isNativePlatform?.());
 const call = (method, options = {}) => cap().nativePromise('LocalNotifications', method, options);
 
-const CHANNEL = 'reminders';
+// Android fixes a channel's importance when it is first created, so a new id is
+// used for the "high" (pop-up) channel; the old low one is removed.
+const CHANNEL = 'calendar-reminders';
+const OLD_CHANNELS = ['reminders'];
+const CHANNEL_DEF = { id: CHANNEL, name: 'Напоминания календаря', description: 'События и список дел на день', importance: 4, visibility: 1, vibration: true, lights: true };
+const importanceText = i => i >= 4 ? 'высокая — всплывает сверху' : i === 3 ? 'обычная — со звуком, но без окошка сверху' : i >= 1 ? 'низкая — тихо в шторке' : 'выключен';
 const MAX = 400; // Android keeps at most ~500 alarms per app; the nearest 400 are plenty.
 const TEST_ID = 1;
 
@@ -26,15 +31,25 @@ export class NativeReminders {
 
   async init() {
     if (!isNativeApp()) return;
-    try {
-      await call('createChannel', { id: CHANNEL, name: 'Напоминания календаря', description: 'События и список дел на день', importance: 5, visibility: 1, vibration: true, lights: true });
-    } catch { /* older Android: no channels */ }
+    await this.ensureChannel();
     cap().addListener('LocalNotifications', 'localNotificationActionPerformed', e => {
       const url = e?.notification?.extra?.url;
       if (url) this.onOpen(url);
     });
     this.schedule(true);
   }
+
+  async ensureChannel() {
+    try {
+      for (const id of OLD_CHANNELS) await call('deleteChannel', { id }).catch(() => {});
+      await call('createChannel', CHANNEL_DEF);
+    } catch { /* older Android: no channels */ }
+  }
+  // Importance of the reminders channel as the phone keeps it (the user or the phone maker may lower it).
+  async channelImportance() {
+    try { return ((await call('listChannels')).channels || []).find(c => c.id === CHANNEL)?.importance ?? null; } catch { return null; }
+  }
+  channelText(i) { return importanceText(i); }
 
   async permission() {
     try { return (await call('checkPermissions')).display; } catch { return 'unknown'; }
@@ -80,7 +95,7 @@ export class NativeReminders {
   // A test reminder in 5 seconds (close the app to see it arrive anyway).
   async test() {
     if (await this.permission() !== 'granted' && await this.request() !== 'granted') throw new Error('Уведомления не разрешены. Разрешите их приложению «Заметки» в настройках телефона.');
-    try { await call('createChannel', { id: CHANNEL, name: 'Напоминания календаря', description: 'События и список дел на день', importance: 5, visibility: 1, vibration: true, lights: true }); } catch { /* ignore */ }
+    await this.ensureChannel();
     await call('schedule', { notifications: [{ id: TEST_ID, title: 'Проверка', body: 'Так будут приходить напоминания календаря', schedule: { at: new Date(Date.now() + 5000).toISOString(), allowWhileIdle: true }, channelId: CHANNEL, smallIcon: 'ic_stat_notify', iconColor: '#7a5af5', extra: { url: '#calendar' } }] });
   }
 
@@ -92,7 +107,7 @@ export class NativeReminders {
     out.push('уведомления приложения: ' + (enabled.error ? 'ошибка ' + enabled.error : enabled.value ? 'включены' : 'ВЫКЛЮЧЕНЫ'));
     const chans = await safe('listChannels');
     const ch = (chans.channels || []).find(c => c.id === CHANNEL);
-    out.push('канал «Напоминания»: ' + (chans.error ? 'ошибка ' + chans.error : ch ? `важность ${ch.importance}` : 'не создан'));
+    out.push('канал «Напоминания календаря»: ' + (chans.error ? 'ошибка ' + chans.error : ch ? `важность ${ch.importance} (${importanceText(ch.importance)})` : 'не создан'));
     const exact = await safe('checkExactNotificationSetting');
     out.push('точное время: ' + (exact.error ? 'нет данных' : exact.exact_alarm));
     const pend = await safe('getPending');

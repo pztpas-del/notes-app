@@ -1071,11 +1071,14 @@ export class CalendarView {
         const perm = await nat.permission();
         const exact = await nat.exactAllowed();
         await nat.schedule();
+        const imp = perm === 'granted' ? await nat.channelImportance() : null;
         const st = nat.state;
         notifStatus.textContent = perm !== 'granted'
           ? 'Уведомления для приложения не разрешены.'
           : `Включены. Запланировано напоминаний: ${st.count}.` + (st.next ? ` Ближайшее: «${st.next.title}», ${new Date(st.next.at).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}.` : '') +
-            (exact ? '' : ' Точное время выключено в настройках телефона — напоминания могут опаздывать.') + (st.error ? ' Ошибка: ' + st.error : '');
+            (exact ? '' : ' Точное время выключено в настройках телефона — напоминания могут опаздывать.') +
+            (imp !== null && imp < 4 ? ` Сейчас напоминания приходят без окошка сверху (важность: ${nat.channelText(imp)}). Чтобы они всплывали: настройки телефона → Приложения → «Заметки» → Уведомления → «Напоминания календаря» → включите всплывающие уведомления (или важность «Высокая»).` : '') +
+            (st.error ? ' Ошибка: ' + st.error : '');
         rc(notifRow,
           perm !== 'granted' ? btn('Разрешить уведомления', e => busy(e.currentTarget, async () => { const r = await nat.request(); this.openSettings(); return r === 'granted' ? null : 'Телефон не разрешил. Откройте настройки приложения «Заметки» → Уведомления.'; }), 'primary') : null,
           perm === 'granted' ? btn('Проверить', e => busy(e.currentTarget, async () => {
