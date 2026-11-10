@@ -190,7 +190,7 @@ function menuItems(view) {
       { label: 'Обычный текст', on: kind === 'body', run: () => setLineKind(view, 'body') },
       'sep',
       { label: 'Цитата', on: kind === 'quote', run: () => setLineKind(view, 'quote') },
-      { label: 'По центру', key: 'Ctrl+E', on: centered, run: () => toggleCenter(view) },
+      { label: 'По центру', key: 'Ctrl+Shift+E', on: centered, run: () => toggleCenter(view) },
     ] },
     { label: 'Вставить элемент', icon: '+', sub: [
       { label: 'Ссылка на заметку', run: () => insertInline(view, '[[', ']]') },
@@ -202,12 +202,15 @@ function menuItems(view) {
       { label: 'Горизонтальная линия', run: () => insertBlock(view, '---\n|CARET|') },
     ] },
     'sep',
-    { label: centered ? 'Убрать выравнивание по центру' : 'Выровнять по центру', icon: '≡', key: 'Ctrl+E', run: () => toggleCenter(view) },
+    { label: centered ? 'Убрать выравнивание по центру' : 'Выровнять по центру', icon: '≡', key: 'Ctrl+Shift+E', run: () => toggleCenter(view) },
   ];
 }
 
 let openMenus = [];
 function closeAll() { for (const m of openMenus) m.remove(); openMenus = []; }
+
+// Narrow screens (phone): a submenu replaces the menu, with "‹ Назад" on top.
+const narrow = () => innerWidth < 700;
 
 function buildMenu(items, x, y, level = 0) {
   const menu = document.createElement('div');
@@ -233,9 +236,15 @@ function buildMenu(items, x, y, level = 0) {
       const r = b.getBoundingClientRect();
       buildMenu(it.sub, r.right - 4, r.top - 6, level + 1);
     };
-    b.addEventListener('mouseenter', openSub);
+    b.addEventListener('mouseenter', () => { if (!narrow()) openSub(); });
     b.addEventListener('click', e => {
       e.stopPropagation();
+      if (it.sub && narrow()) {
+        const box = menu.getBoundingClientRect();
+        closeAll();
+        buildMenu([{ label: 'Назад', icon: '‹', run: () => buildMenu(items, box.left, box.top, level) }, 'sep', ...it.sub], box.left, box.top, level);
+        return;
+      }
       if (it.sub) { openSub(); return; }
       closeAll();
       it.run();
@@ -252,6 +261,12 @@ function buildMenu(items, x, y, level = 0) {
   menu.style.left = Math.max(8, left) + 'px';
   menu.style.top = Math.max(8, top) + 'px';
   return menu;
+}
+
+// The same menu from a button (the "Аа" button in the note's top bar, handy on a phone).
+export function openEditMenuAt(view, x, y) {
+  closeAll();
+  buildMenu(menuItems(view), x, y);
 }
 
 // Hooks the menu and the shortcuts into an editor view.
@@ -274,7 +289,7 @@ export function attachEditMenu(view) {
     const run = fn => { e.preventDefault(); e.stopPropagation(); fn(); };
     if (k === 'b' || k === 'и') run(() => toggleWrap(view, '**'));
     else if (k === 'i' || k === 'ш') run(() => toggleWrap(view, '*'));
-    else if (k === 'e' || k === 'у') run(() => toggleCenter(view));
+    else if ((k === 'e' || k === 'у') && e.shiftKey) run(() => toggleCenter(view)); // Ctrl+E alone is the reading mode
     else if ((k === 'k' || k === 'л') && !e.shiftKey) run(() => insertInline(view, '[', '](https://)', 'текст'));
   }, true);
 }

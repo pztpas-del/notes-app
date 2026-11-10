@@ -9,6 +9,7 @@ import { MediaStore } from './media.js';
 import { CalendarView } from './calendar.js';
 import { PushClient } from './push.js';
 import { NativeReminders, isNativeApp } from './native.js';
+import { openEditMenuAt } from './editmenu.js';
 
 const $ = id => document.getElementById(id);
 const prefs = {
@@ -69,6 +70,7 @@ function navigate(hash) { if (location.hash === hash) route(); else location.has
 function showView(id, crumb) {
   for (const v of ['noteView', 'fileView', 'graphView', 'schemaView', 'calendarView', 'settingsView', 'emptyView']) $(v).hidden = v !== id;
   $('modeBtn').hidden = $('moreBtn').hidden = $('attachBtn').hidden = $('panelBtn').hidden = id !== 'noteView';
+  $('formatBtn').hidden = id !== 'noteView' || mode === 'read';
   if (id !== 'noteView') current = null;
   if (id !== 'fileView') currentFile = null;
   if (crumb !== undefined) $('crumb').textContent = crumb;
@@ -134,6 +136,7 @@ function renderNote(switching = false) {
     if (sig !== linkSig) { linkSig = sig; ed.refresh(); }
   }
   const reading = mode === 'read';
+  $('formatBtn').hidden = reading;
   $('editor').hidden = reading;
   $('preview').hidden = !reading;
   if (reading) $('preview').innerHTML = render(note.content, { resolve: t => vault.resolve(t), fileUrl: n => vault.fileUrl(n) });
@@ -887,6 +890,13 @@ function bind() {
   });
 
   $('attachBtn').addEventListener('click', () => $('fileInput').click());
+  // "Аа": the editor's right-click menu as a button (on a phone there is no right click).
+  $('formatBtn').addEventListener('mousedown', e => e.preventDefault()); // keep the selection in the note
+  $('formatBtn').addEventListener('click', e => {
+    e.stopPropagation();
+    const r = $('formatBtn').getBoundingClientRect();
+    openEditMenuAt(ed.view, r.left, r.bottom + 6);
+  });
   $('fileInput').addEventListener('change', async e => {
     const files = [...e.target.files];
     e.target.value = '';
