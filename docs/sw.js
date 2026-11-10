@@ -1,12 +1,13 @@
 // Offline support: always try the network first so updates arrive at once,
 // and fall back to the saved copy when there is no connection.
-const CACHE = 'notes-app-v16';
+const CACHE = 'notes-app-v17';
 const SHELL = ['./', 'index.html', 'app.css', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
   'js/app.js', 'js/db.js', 'js/vault.js', 'js/markdown.js', 'js/graph.js', 'js/sync.js',
   'js/editor.js', 'js/schema.js', 'js/yadisk.js', 'js/media.js', 'js/calendar.js', 'js/calendar-data.js', 'js/push.js', 'js/native.js', 'vendor/codemirror.js'];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // cache: 'reload' — take the files from the site, not from the browser's HTTP cache.
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys()
@@ -16,8 +17,10 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== location.origin || url.pathname.includes('/mock-github')) return;
+  // 'no-cache': always ask the site whether the file changed (GitHub Pages lets
+  // browsers keep files for 10 minutes, which delayed updates in the Android app).
   e.respondWith(
-    fetch(e.request)
+    fetch(url.href, { cache: 'no-cache', credentials: 'same-origin' })
       .then(res => {
         if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); }
         return res;

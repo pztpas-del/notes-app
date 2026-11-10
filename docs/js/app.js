@@ -940,6 +940,16 @@ async function init() {
   navigator.serviceWorker?.addEventListener('message', e => { if (e.data?.type === 'open' && e.data.url) location.hash = e.data.url.replace(/^[^#]*/, ''); });
   runSync();
   setInterval(() => { if (document.visibilityState === 'visible') runSync(); }, 60000);
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) {
+    // A new version of the program was published: reload once to use it.
+    const hadController = Boolean(navigator.serviceWorker.controller);
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || sessionStorage.getItem('notes.swReloaded')) return;
+      sessionStorage.setItem('notes.swReloaded', '1');
+      vault.flush();
+      location.reload();
+    });
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+  }
 }
 init();
