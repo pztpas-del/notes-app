@@ -100,7 +100,8 @@ export class YaDisk {
   async download(path) {
     const href = await this.href(path);
     let res;
-    try { res = await fetch(href); } catch { throw new YaError('Не удалось скачать файл.', 'cors'); }
+    // Without the page address: Yandex Disk blocks file links requested from other sites.
+    try { res = await fetch(href, { referrerPolicy: 'no-referrer' }); } catch { throw new YaError('Не удалось скачать файл.', 'cors'); }
     if (!res.ok) throw new YaError(`Яндекс Диск не отдал файл (ошибка ${res.status}).`, 'unavailable');
     const blob = await res.blob();
     // During a Disk outage a page or an error comes back instead of the file.
