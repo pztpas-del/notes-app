@@ -10,9 +10,10 @@ const call = (method, options = {}) => cap().nativePromise('LocalNotifications',
 
 const CHANNEL = 'reminders';
 const MAX = 400; // Android keeps at most ~500 alarms per app; the nearest 400 are plenty.
+const TEST_ID = 1;
 
-// Stable 31-bit number for a reminder key (Android needs integer ids).
-const numId = s => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 1) || 1; };
+// Stable 31-bit number for a reminder key (Android needs integer ids), never TEST_ID.
+const numId = s => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return Math.max(2, h >>> 1); };
 
 export class NativeReminders {
   constructor(store, onOpen) {
@@ -57,7 +58,8 @@ export class NativeReminders {
     const sig = JSON.stringify(items.map(i => [i.id, i.at, i.title, i.body]));
     if (!force && sig === this.lastSig) return;
     try {
-      const pending = (await call('getPending')).notifications || [];
+      // Re-set every reminder alarm; the test notification (id TEST_ID) is left alone.
+      const pending = ((await call('getPending')).notifications || []).filter(p => Number(p.id) !== TEST_ID);
       if (pending.length) await call('cancel', { notifications: pending.map(p => ({ id: Number(p.id) })) });
       if (items.length) {
         await call('schedule', { notifications: items.map(i => ({
@@ -78,6 +80,26 @@ export class NativeReminders {
   // A test reminder in 5 seconds (close the app to see it arrive anyway).
   async test() {
     if (await this.permission() !== 'granted' && await this.request() !== 'granted') throw new Error('Уведомления не разрешены. Разрешите их приложению «Заметки» в настройках телефона.');
-    await call('schedule', { notifications: [{ id: 1, title: 'Проверка', body: 'Так будут приходить напоминания календаря', schedule: { at: new Date(Date.now() + 5000).toISOString(), allowWhileIdle: true }, channelId: CHANNEL, smallIcon: 'ic_stat_notify', iconColor: '#7a5af5', extra: { url: '#calendar' } }] });
+    try { await call('createChannel', { id: CHANNEL, name: 'Напоминания календаря', description: 'События и список дел на день', importance: 5, visibility: 1, vibration: true, lights: true }); } catch { /* ignore */ }
+    await call('schedule', { notifications: [{ id: TEST_ID, title: 'Проверка', body: 'Так будут приходить напоминания календаря', schedule: { at: new Date(Date.now() + 5000).toISOString(), allowWhileIdle: true }, channelId: CHANNEL, smallIcon: 'ic_stat_notify', iconColor: '#7a5af5', extra: { url: '#calendar' } }] });
+  }
+
+  // What Android says about the test notification a few seconds later.
+  async diagnose() {
+    const out = [];
+    const safe = async (m, o) => { try { return await call(m, o); } catch (e) { return { error: e?.message || String(e) }; } };
+    const enabled = await safe('areEnabled');
+    out.push('уведомления приложения: ' + (enabled.error ? 'ошибка ' + enabled.error : enabled.value ? 'включены' : 'ВЫКЛЮЧЕНЫ'));
+    const chans = await safe('listChannels');
+    const ch = (chans.channels || []).find(c => c.id === CHANNEL);
+    out.push('канал «Напоминания»: ' + (chans.error ? 'ошибка ' + chans.error : ch ? `важность ${ch.importance}` : 'не создан'));
+    const exact = await safe('checkExactNotificationSetting');
+    out.push('точное время: ' + (exact.error ? 'нет данных' : exact.exact_alarm));
+    const pend = await safe('getPending');
+    out.push('тест в очереди: ' + ((pend.notifications || []).some(p => Number(p.id) === TEST_ID) ? 'да (ещё не сработал)' : 'нет'));
+    const shown = await safe('getDeliveredNotifications');
+    out.push('тест показан системой: ' + (shown.error ? 'нет данных' : (shown.notifications || []).some(n => Number(n.id) === TEST_ID) ? 'да' : 'нет'));
+    out.push('напоминаний запланировано: ' + this.state.count + (this.state.error ? ', ошибка: ' + this.state.error : ''));
+    return out.join('; ');
   }
 }

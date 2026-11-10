@@ -1078,7 +1078,12 @@ export class CalendarView {
             (exact ? '' : ' Точное время выключено в настройках телефона — напоминания могут опаздывать.') + (st.error ? ' Ошибка: ' + st.error : '');
         rc(notifRow,
           perm !== 'granted' ? btn('Разрешить уведомления', e => busy(e.currentTarget, async () => { const r = await nat.request(); this.openSettings(); return r === 'granted' ? null : 'Телефон не разрешил. Откройте настройки приложения «Заметки» → Уведомления.'; }), 'primary') : null,
-          perm === 'granted' ? btn('Проверить', e => busy(e.currentTarget, async () => { await nat.test(); return 'Через 5 секунд придёт тестовое уведомление. Можно сразу свернуть или закрыть приложение.'; })) : null,
+          perm === 'granted' ? btn('Проверить', e => busy(e.currentTarget, async () => {
+            await nat.test();
+            // Ten seconds later ask Android what happened, so a failure can be explained.
+            setTimeout(async () => { if (pushMsg.isConnected) pushMsg.textContent = 'Проверка: ' + await nat.diagnose(); }, 10000);
+            return 'Через 5 секунд придёт тестовое уведомление. Через 10 секунд здесь появится результат проверки.';
+          })) : null,
           perm === 'granted' && !exact ? btn('Разрешить точное время', () => nat.openExactSettings()) : null);
       })();
     }
