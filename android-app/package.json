@@ -1,0 +1,22 @@
+{
+  "name": "android-app",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@capacitor/android": "^7.6.10",
+    "@capacitor/app": "^7.1.2",
+    "@capacitor/core": "^7.6.10",
+    "@capacitor/local-notifications": "^7.0.7"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.6.10"
+  }
+}

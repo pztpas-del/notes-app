@@ -8,6 +8,7 @@ import { YaDisk } from './yadisk.js';
 import { MediaStore } from './media.js';
 import { CalendarView } from './calendar.js';
 import { PushClient } from './push.js';
+import { NativeReminders, isNativeApp } from './native.js';
 
 const $ = id => document.getElementById(id);
 const prefs = {
@@ -542,7 +543,8 @@ let schema = null;
 async function notify(title, body, tag, url) {
   toast(`🔔 ${title}: ${body}`, 9000);
   // With push on, the server sends the system notification; the app only shows the message.
-  if (push.onHere()) return;
+  // In the Android app the phone itself shows it (alarms set by native.js).
+  if (isNativeApp() || push.onHere()) return;
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
   const opts = { body, tag, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', data: { url: url || '#calendar' }, renotify: true, silent: false, vibrate: [250, 120, 250] };
   try {
@@ -552,7 +554,11 @@ async function notify(title, body, tag, url) {
 }
 const calendar = new CalendarView($('calendarView'), { vault, toast: (t, ms) => toast(t, ms), notify });
 const push = new PushClient(vault, calendar.store);
-calendar.push = push;
+calendar.push = isNativeApp() ? null : push;
+const nativeReminders = new NativeReminders(calendar.store, url => { location.hash = url.replace(/^[^#]*/, ''); });
+calendar.native = isNativeApp() ? nativeReminders : null;
+// Reminders changed: the Android app re-sets its alarms, the browser sends them to the push server.
+const remindersChanged = (delay) => { if (isNativeApp()) nativeReminders.scheduleSoon(delay); else push.scheduleUpload(delay); };
 
 function showCalendar(target) {
   showView('calendarView', 'Календарь');
@@ -782,7 +788,7 @@ vault.onChange(() => {
     if (!$('graphView').hidden && graph) updateGraph();
     if (schema) schema.refresh();
     calendar.refresh();
-    push.scheduleUpload();
+    remindersChanged();
     if (current) renderPanel();
   }, 150);
 });
@@ -923,8 +929,14 @@ async function init() {
     syncMedia().then(() => moveLegacyToDisk());
   } else if (yaBack === 'denied') toast('Доступ к Яндекс Диску не выдан.', 7000);
   calendar.startReminders();
-  push.scheduleUpload(3000);
-  setInterval(() => push.upload(true), 6 * 3600e3);
+  if (isNativeApp()) {
+    nativeReminders.init();
+    // New days come into the 60-day window: refresh the alarms now and then.
+    setInterval(() => nativeReminders.schedule(true), 6 * 3600e3);
+  } else {
+    push.scheduleUpload(3000);
+    setInterval(() => push.upload(true), 6 * 3600e3);
+  }
   navigator.serviceWorker?.addEventListener('message', e => { if (e.data?.type === 'open' && e.data.url) location.hash = e.data.url.replace(/^[^#]*/, ''); });
   runSync();
   setInterval(() => { if (document.visibilityState === 'visible') runSync(); }, 60000);

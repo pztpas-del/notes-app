@@ -30,6 +30,7 @@ const minutesOf = d => d.getHours() * 60 + d.getMinutes();
 export class CalendarView {
   constructor(root, { vault, toast, notify, push = null }) {
     this.push = push;
+    this.native = null; // set by app.js inside the Android app
     this.root = root;
     this.vault = vault;
     this.toast = toast;
@@ -1057,7 +1058,30 @@ export class CalendarView {
       pushOn ? btn('Проверить', e => busy(e.currentTarget, async () => { const r = await push.test(); return r.results?.some(x => x === 201) ? 'Отправлено. Уведомление должно прийти через несколько секунд.' : 'Сервер не смог отправить уведомление: ' + JSON.stringify(r.results); })) : null,
       pushOn ? btn('Выключить на этом устройстве', e => busy(e.currentTarget, async () => { await push.disable(); this.openSettings(); return null; }), 'danger-text') : null,
       !push && perm === 'default' ? btn('Разрешить уведомления', async () => { await Notification.requestPermission(); this.openSettings(); }, 'primary') : null);
-    const serverRow = push && !push.url() ? el('label', { className: 'ce-block' }, el('span', { className: 'ce-label', textContent: 'Адрес сервера уведомлений' }), serverInput) : null;
+    let serverRow = push && !push.url() ? el('label', { className: 'ce-block' }, el('span', { className: 'ce-label', textContent: 'Адрес сервера уведомлений' }), serverInput) : null;
+    let notifHint = 'Включите на каждом устройстве, где хотите получать напоминания (на Android — в программе, установленной на главный экран). Расписание обновляется с любого устройства, где вы меняете календарь.';
+    // Android app: reminders are alarms on the phone itself.
+    const nat = this.native;
+    if (nat) {
+      serverRow = null;
+      notifHint = 'Напоминания ставит сам телефон: они приходят в нужную минуту, даже если приложение закрыто, без интернета и сервера.';
+      notifStatus.textContent = 'Проверяю…';
+      rc(notifRow);
+      (async () => {
+        const perm = await nat.permission();
+        const exact = await nat.exactAllowed();
+        await nat.schedule();
+        const st = nat.state;
+        notifStatus.textContent = perm !== 'granted'
+          ? 'Уведомления для приложения не разрешены.'
+          : `Включены. Запланировано напоминаний: ${st.count}.` + (st.next ? ` Ближайшее: «${st.next.title}», ${new Date(st.next.at).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}.` : '') +
+            (exact ? '' : ' Точное время выключено в настройках телефона — напоминания могут опаздывать.') + (st.error ? ' Ошибка: ' + st.error : '');
+        rc(notifRow,
+          perm !== 'granted' ? btn('Разрешить уведомления', e => busy(e.currentTarget, async () => { const r = await nat.request(); this.openSettings(); return r === 'granted' ? null : 'Телефон не разрешил. Откройте настройки приложения «Заметки» → Уведомления.'; }), 'primary') : null,
+          perm === 'granted' ? btn('Проверить', e => busy(e.currentTarget, async () => { await nat.test(); return 'Через 5 секунд придёт тестовое уведомление. Можно сразу свернуть или закрыть приложение.'; })) : null,
+          perm === 'granted' && !exact ? btn('Разрешить точное время', () => nat.openExactSettings()) : null);
+      })();
+    }
     if (pushOn) push.status().then(st => { if (!pushMsg.textContent) pushMsg.textContent = `Устройств с уведомлениями: ${st.devices.length}. Запланировано напоминаний: ${st.scheduled}.` + (st.next ? ` Ближайшее: «${st.next.title}», ${new Date(st.next.at).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}.` : ''); }).catch(e => { pushMsg.className = 'form-msg bad'; pushMsg.textContent = e.message; });
     this.openModal(el('div', { className: 'ce', role: 'dialog', 'aria-label': 'Настройки календаря' },
       el('h2', { textContent: 'Настройки календаря' }),
@@ -1069,7 +1093,7 @@ export class CalendarView {
       el('div', { className: 'ce-row' }, el('span', { className: 'ce-label', textContent: 'Напоминания о событиях «весь день» считаются от' }), allDayAt),
       el('h2', { textContent: 'Уведомления' }),
       notifStatus,
-      el('p', { className: 'muted small', textContent: 'Включите на каждом устройстве, где хотите получать напоминания (на Android — в программе, установленной на главный экран). Расписание обновляется с любого устройства, где вы меняете календарь.' }),
+      el('p', { className: 'muted small', textContent: notifHint }),
       serverRow,
       notifRow,
       pushMsg,

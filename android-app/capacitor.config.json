@@ -1,0 +1,24 @@
+{
+  "appId": "io.github.pztpasdel.notes",
+  "appName": "Заметки",
+  "webDir": "www",
+  "server": {
+    "url": "https://pztpas-del.github.io/notes-app/",
+    "allowNavigation": [
+      "pztpas-del.github.io",
+      "oauth.yandex.ru",
+      "passport.yandex.ru",
+      "*.yandex.ru",
+      "api.github.com"
+    ]
+  },
+  "android": {
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_notify",
+      "iconColor": "#7a5af5"
+    }
+  }
+}
