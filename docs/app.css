@@ -126,6 +126,18 @@ code { font-family: var(--mono); font-size: .9em; background: var(--code-bg); pa
 .md h1 { font-size: 1.7em; } .md h2 { font-size: 1.4em; } .md h3 { font-size: 1.2em; }
 .md > :first-child { margin-top: 0; }
 .md p { margin: 0 0 .8em; }
+.md .center-line { display: block; text-align: center; }
+
+/* Right-click menu of the editor (like Obsidian): items, shortcuts, submenus. */
+.ctx-menu { position: fixed; z-index: 100; min-width: 230px; max-width: 320px; background: var(--bg); border: 1px solid var(--border); border-radius: 12px; padding: 5px; box-shadow: 0 12px 34px rgb(0 0 0 / .28); display: grid; gap: 1px; animation: pop-in .12s var(--ease); font-size: 14px; }
+.ctx-item { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 0; background: transparent; text-align: left; padding: 6px 10px 6px 8px; border-radius: 8px; color: var(--text); font: inherit; white-space: nowrap; }
+.ctx-item:hover:not(:disabled), .ctx-item.open { background: var(--surface); }
+.ctx-item:disabled { opacity: .45; }
+.ctx-icon { color: var(--text-muted); font-weight: 700; text-align: center; font-size: 13px; }
+.ctx-item.on .ctx-icon { color: var(--accent); }
+.ctx-label { overflow: hidden; text-overflow: ellipsis; }
+.ctx-key { color: var(--text-muted); font-size: 12px; }
+.ctx-sep { height: 1px; background: var(--border); margin: 4px 6px; }
 .md a { color: var(--link); text-decoration: none; }
 .md a:hover { text-decoration: underline; }
 .md a.unresolved { opacity: .65; }

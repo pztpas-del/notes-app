@@ -7,10 +7,12 @@ import {
   markdown, markdownLanguage, markdownKeymap, syntaxTree, indentUnit,
   autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap, search, searchKeymap,
 } from '../vendor/codemirror.js';
+import { attachEditMenu, installMenuDismiss } from './editmenu.js';
 
 const fromOutside = Annotation.define();
 const redraw = StateEffect.define();
 const IMAGE_RE = /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i;
+const CENTER_RE = /^(\s*(?:#{1,6}\s+|>\s?|[-*+]\s+(?:\[[ xX]\]\s+)?|\d+[.)]\s+)?)<center>(.*)<\/center>\s*$/;
 
 // ---------- Widgets ----------
 class LinkWidget extends WidgetType {
@@ -204,6 +206,34 @@ function buildDecorations(view, opts) {
     });
   }
 
+  // Centred lines: <center>…</center> (as in Obsidian). The tags show only while editing the line.
+  for (const { from, to } of view.visibleRanges) {
+    for (let pos = from; pos <= to;) {
+      const line = doc.lineAt(pos);
+      pos = line.to + 1;
+      if (inCode.has(line.number)) continue;
+      const m = line.text.match(CENTER_RE);
+      if (!m) continue;
+      lineClass(line.from, 'cm-center');
+      const open = line.from + m[1].length, close = line.from + line.text.lastIndexOf('</center>');
+      const active = isActive(line.from);
+      if (active) { mark(open, open + 8, 'cm-syntax'); mark(close, close + 9, 'cm-syntax'); }
+      else { hide(open, open + 8); hide(close, close + 9); }
+      // A line starting with <center> is raw HTML to the Markdown grammar, so its
+      // **bold**, *italic*, ~~strike~~ are drawn here by hand.
+      if (m[1].trim()) continue; // after a heading/list mark the grammar handles it
+      const inner = line.text.slice(m[1].length + 8, line.text.lastIndexOf('</center>'));
+      const base = open + 8;
+      for (const [re, cls, len] of [[/\*\*(?!\s)(.+?)(?<!\s)\*\*/g, 'cm-strong', 2], [/~~(.+?)~~/g, 'cm-strike', 2], [/(?<![*\w])\*(?![\s*])(.+?)(?<![\s*])\*(?![*\w])/g, 'cm-em', 1]]) {
+        for (const x of inner.matchAll(re)) {
+          const a = base + x.index, b = a + x[0].length;
+          mark(a + len, b - len, cls);
+          if (active) { mark(a, a + len, 'cm-syntax'); mark(b - len, b, 'cm-syntax'); } else { hide(a, a + len); hide(b - len, b); }
+        }
+      }
+    }
+  }
+
   // Things the Markdown grammar does not know: [[links]], ![[embeds]], #tags, ==highlight==.
   for (const { from, to } of view.visibleRanges) {
     const text = state.sliceDoc(from, to);
@@ -285,6 +315,7 @@ const theme = EditorView.theme({
   '.cm-scroller': { fontFamily: 'var(--font)', lineHeight: '1.65', overflow: 'visible' },
   '.cm-content': { padding: '0 0 40vh', caretColor: 'var(--accent)' },
   '.cm-line': { padding: '0' },
+  '.cm-line.cm-center': { textAlign: 'center' },
   '.cm-cursor': { borderLeftColor: 'var(--accent)', borderLeftWidth: '2px' },
   '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': { backgroundColor: 'var(--selection) !important' },
   '.cm-placeholder': { color: 'var(--text-muted)' },
@@ -369,6 +400,8 @@ export function createEditor(parent, opts) {
         }),
   ];
   const view = new EditorView({ parent, state: EditorState.create({ doc: '', extensions }) });
+  attachEditMenu(view);
+  installMenuDismiss();
 
   async function insertFiles(v, files, pos) {
     const snippets = await opts.saveFiles(files);

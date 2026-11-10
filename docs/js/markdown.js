@@ -26,6 +26,9 @@ function embed(inner, ctx) {
 }
 
 function inline(src, ctx) {
+  // <center>…</center> (Obsidian-compatible): the text is centred, Markdown inside still works.
+  const c = src.match(/^\s*<center>(.*)<\/center>\s*$/);
+  if (c) return `<span class="center-line">${inline(c[1], ctx)}</span>`;
   const slots = [];
   const keep = html => `\u0000${slots.push(html) - 1}\u0000`;
   let s = src
@@ -77,7 +80,7 @@ function blocks(lines, ctx, lineOffset) {
     }
     if ((m = line.match(/^(#{1,6})\s+(.*?)\s*#*\s*$/))) {
       const n = m[1].length;
-      out.push(`<h${n} id="${attr(slug(m[2]))}">${inline(m[2], ctx)}</h${n}>`);
+      out.push(`<h${n} id="${attr(slug(m[2].replace(/<\/?center>/g, '')))}">${inline(m[2], ctx)}</h${n}>`);
       i++; continue;
     }
     if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { out.push('<hr>'); i++; continue; }
@@ -119,7 +122,8 @@ function blocks(lines, ctx, lineOffset) {
     }
     const para = [];
     while (i < lines.length && lines[i].trim() && !(para.length && isBlockStart(lines[i], lines[i + 1]))) para.push(lines[i++]);
-    out.push(`<p>${para.map(l => inline(l, ctx)).join('<br>')}</p>`);
+    // Centred lines are blocks of their own, so no line break is added next to them.
+    out.push(`<p>${para.map(l => inline(l, ctx)).reduce((html, part, k) => html + (k && !part.startsWith('<span class="center-line">') && !para[k - 1].includes('<center>') ? '<br>' : '') + part, '')}</p>`);
   }
   return out.join('\n');
 }
