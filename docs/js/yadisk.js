@@ -101,8 +101,11 @@ export class YaDisk {
     const href = await this.href(path);
     let res;
     try { res = await fetch(href); } catch { throw new YaError('Не удалось скачать файл.', 'cors'); }
-    if (!res.ok) throw new YaError(`Яндекс Диск не отдал файл (ошибка ${res.status}).`, 'http');
-    return res.blob();
+    if (!res.ok) throw new YaError(`Яндекс Диск не отдал файл (ошибка ${res.status}).`, 'unavailable');
+    const blob = await res.blob();
+    // During a Disk outage a page or an error comes back instead of the file.
+    if (/^(text\/html|application\/json)/i.test(blob.type)) throw new YaError('Яндекс Диск сейчас не отдаёт этот файл.', 'unavailable');
+    return blob;
   }
 
   // Every file in a folder of the app: [{ path, size, modified }]

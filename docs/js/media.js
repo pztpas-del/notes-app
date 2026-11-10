@@ -12,7 +12,9 @@ const placeholder = text => 'data:image/svg+xml;charset=utf-8,' + encodeURICompo
   `<text x="160" y="66" text-anchor="middle" font-family="system-ui,sans-serif" font-size="15" fill="#888">${text}</text></svg>`);
 export const LOADING = placeholder('Загрузка с Яндекс Диска…');
 export const OFFLINE = placeholder('Откроется, когда будет интернет');
-export const FAILED = placeholder('Не удалось загрузить файл');
+export const FAILED = placeholder('Диск пока не отдаёт файл, повторю позже');
+const BAD_TYPE = /^(text\/html|application\/json)/i; // an error page saved instead of the file
+const RETRY_AFTER = 3 * 60 * 1000; // a failed file is tried again after this
 
 export class MediaStore {
   constructor(ya, onChange) {
@@ -65,6 +67,12 @@ export class MediaStore {
     this.loading.add(path);
     try {
       const rec = await db.media.get(path);
+      if (rec?.blob && BAD_TYPE.test(rec.blob.type) && !rec.pending) {
+        // A broken copy from a Disk outage: drop it and download again.
+        await db.media.del(path);
+        this.local.delete(path);
+        return;
+      }
       if (rec?.blob) {
         this.urls.set(path, URL.createObjectURL(rec.blob));
         rec.at = Date.now();
@@ -90,7 +98,9 @@ export class MediaStore {
         try { this.urls.set(path, await this.ya.href(path)); return; } catch { /* fall through */ }
       }
       if (e.code === 'network') { setTimeout(() => this.changed(), 15000); return; }
+      // The Disk may be having trouble: show a clear message and try again later.
       this.failed.add(path);
+      setTimeout(() => { this.failed.delete(path); this.changed(); }, RETRY_AFTER);
     } finally { this.loading.delete(path); this.changed(); }
   }
 
