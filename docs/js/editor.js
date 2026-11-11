@@ -400,7 +400,23 @@ export function createEditor(parent, opts) {
         }),
   ];
   const view = new EditorView({ parent, state: EditorState.create({ doc: '', extensions }) });
-  attachEditMenu(view);
+  // "Insert picture, video or file" from the menu: goes exactly where the menu was opened.
+  const picker = Object.assign(document.createElement('input'), { type: 'file', multiple: true, hidden: true,
+    accept: 'image/*,video/*,audio/*,application/pdf,.txt,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip' });
+  document.body.append(picker);
+  let pickAt = null;
+  picker.addEventListener('change', async () => {
+    const files = [...picker.files];
+    picker.value = '';
+    if (!files.length || pickAt === null) return;
+    const snippets = await opts.saveFiles(files);
+    if (!snippets.length) return;
+    const pos = Math.min(pickAt, view.state.doc.length);
+    const insert = snippets.join('\n');
+    view.dispatch({ changes: { from: pos, insert }, selection: { anchor: pos + insert.length } });
+    view.focus();
+  });
+  attachEditMenu(view, { insertMedia: pos => { pickAt = pos; picker.click(); } });
   installMenuDismiss();
 
   async function insertFiles(v, files, pos) {

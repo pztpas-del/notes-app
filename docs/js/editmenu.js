@@ -165,6 +165,9 @@ function menuItems(view) {
   const kind = lineKind(view.state.doc.lineAt(view.state.selection.main.from).text);
   const centered = CENTER_RE.test(view.state.doc.lineAt(view.state.selection.main.from).text);
   const head = n => ({ label: `Заголовок ${n}`, on: kind === 'h' + n, run: () => setLineKind(view, 'h' + n) });
+  // Media goes exactly where the cursor is now (a right-click first moves the cursor there).
+  const at = view.state.selection.main.head;
+  const media = view._editMenuOpts?.insertMedia ? { label: 'Картинка, видео или файл…', icon: '🖼', run: () => view._editMenuOpts.insertMedia(at) } : null;
   return [
     { label: 'Вырезать', key: 'Ctrl+X', disabled: !hasSel, run: () => copy(view, true) },
     { label: 'Копировать', key: 'Ctrl+C', disabled: !hasSel, run: () => copy(view, false) },
@@ -192,7 +195,10 @@ function menuItems(view) {
       { label: 'Цитата', on: kind === 'quote', run: () => setLineKind(view, 'quote') },
       { label: 'По центру', key: 'Ctrl+Shift+E', on: centered, run: () => toggleCenter(view) },
     ] },
+    media && { ...media, label: 'Вставить картинку, видео или файл…' },
     { label: 'Вставить элемент', icon: '+', sub: [
+      media,
+      media && 'sep',
       { label: 'Ссылка на заметку', run: () => insertInline(view, '[[', ']]') },
       { label: 'Внешняя ссылка', key: 'Ctrl+K', run: () => insertInline(view, '[', '](https://)', 'текст') },
       'sep',
@@ -217,6 +223,7 @@ function buildMenu(items, x, y, level = 0) {
   menu.className = 'ctx-menu';
   menu.setAttribute('role', 'menu');
   for (const it of items) {
+    if (!it) continue;
     if (it === 'sep') { menu.append(Object.assign(document.createElement('div'), { className: 'ctx-sep' })); continue; }
     const b = document.createElement('button');
     b.type = 'button';
@@ -270,7 +277,8 @@ export function openEditMenuAt(view, x, y) {
 }
 
 // Hooks the menu and the shortcuts into an editor view.
-export function attachEditMenu(view) {
+export function attachEditMenu(view, opts = {}) {
+  view._editMenuOpts = opts;
   let lastPointer = 'mouse';
   view.dom.addEventListener('pointerdown', e => { lastPointer = e.pointerType; }, true);
   view.dom.addEventListener('contextmenu', e => {
