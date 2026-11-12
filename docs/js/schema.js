@@ -117,7 +117,7 @@ export class SchemaView {
         btn('Вписать', 'Показать схему целиком', () => this.smooth(() => this.fit())),
         btn('Открыть целиком', 'Открыть блок-схему на весь экран', () => this.openFull(this.focusPath)))
       : el('div', { className: 'schema-tools' },
-        btn('+ Заметки', 'Добавить на схему существующие заметки', () => this.togglePanel()),
+        btn('+ Заметки', 'Добавить на схему существующие заметки и папки', () => this.togglePanel()),
         btn('Новая заметка', 'Создать заметку прямо на схеме', () => this.askName(null, null)),
         btn('Выровнять', 'Разложить все блоки по уровням заново', () => this.relayout()),
         btn('Вписать', 'Показать схему целиком', () => this.smooth(() => this.fit())));
@@ -161,6 +161,25 @@ export class SchemaView {
     let n = this.nodeFor(path);
     if (!n) { n = { id: newId(), file: path, x: 0, y: 0, pinned: false }; this.s.nodes.push(n); }
     if (parent) this.connect(parent, n.id, true);
+    this.autoPlace();
+    this.save();
+    this.render();
+    this.tween(prev);
+    return n;
+  }
+  // A folder block; it goes under its parent folder or above its subfolders if those are on the schema.
+  addFolder(dir) {
+    const prev = this.snapshot();
+    let n = this.s.nodes.find(x => x.folder === dir);
+    if (!n) {
+      n = { id: newId(), folder: dir, x: 0, y: 0, pinned: false };
+      this.s.nodes.push(n);
+      const parent = this.s.nodes.find(x => x.folder !== undefined && dir.startsWith(x.folder + '/') && !dir.slice(x.folder.length + 1).includes('/'));
+      if (parent) this.connect(parent.id, n.id, true);
+      for (const sub of this.s.nodes.filter(x => x.folder !== undefined && x.folder.startsWith(dir + '/') && !x.folder.slice(dir.length + 1).includes('/'))) {
+        if (!this.s.edges.some(e => e.toNode === sub.id)) this.connect(n.id, sub.id, true);
+      }
+    }
     this.autoPlace();
     this.save();
     this.render();
@@ -360,15 +379,26 @@ export class SchemaView {
   togglePanel() {
     if (!this.panel.hidden) { this.panel.hidden = true; return; }
     this.cancelName();
-    const search = el('input', { type: 'search', placeholder: 'Найти заметку', autocomplete: 'off' });
+    const search = el('input', { type: 'search', placeholder: 'Найти заметку или папку', autocomplete: 'off' });
     const list = el('div', { className: 'schema-panel-list' });
     const fill = () => {
       const q = search.value.trim().toLowerCase();
       const onSchema = new Set(this.s.nodes.map(n => n.file));
       const free = this.vault.notes().filter(n => !onSchema.has(n.path) && n.path.toLowerCase().includes(q))
         .sort((a, b) => basename(a.path).localeCompare(basename(b.path), 'ru'));
+      // Folders too: a folder goes on the schema as a 📁 block.
+      const foldersOn = new Set(this.s.nodes.filter(n => n.folder !== undefined).map(n => n.folder));
+      const freeFolders = this.vault.folders().filter(f => !foldersOn.has(f) && f.toLowerCase().includes(q));
       list.replaceChildren();
-      if (!free.length) list.append(el('p', { className: 'muted', textContent: q ? 'Ничего не найдено.' : 'Все заметки уже на схеме.' }));
+      if (!free.length && !freeFolders.length) list.append(el('p', { className: 'muted', textContent: q ? 'Ничего не найдено.' : 'Все заметки и папки уже на схеме.' }));
+      if (freeFolders.length) list.append(el('div', { className: 'schema-panel-group', textContent: 'Папки' }));
+      for (const f of freeFolders) {
+        const b = el('button', { type: 'button', className: 'schema-panel-folder', textContent: '📁 ' + f.split('/').pop(), title: f });
+        if (f.includes('/')) b.append(el('small', { textContent: ' ' + f.slice(0, f.lastIndexOf('/')) }));
+        b.addEventListener('click', () => { const node = this.addFolder(f); this.sel = { type: 'node', id: node.id }; this.render(); this.smooth(() => this.centerOn(node)); fill(); });
+        list.append(b);
+      }
+      if (freeFolders.length && free.length) list.append(el('div', { className: 'schema-panel-group', textContent: 'Заметки' }));
       for (const n of free) {
         const b = el('button', { type: 'button', textContent: basename(n.path) });
         b.addEventListener('click', () => { const node = this.addNote(n.path); this.sel = { type: 'node', id: node.id }; this.render(); this.blockEl(node.id)?.classList.add('appear'); this.smooth(() => this.centerOn(node)); fill(); });

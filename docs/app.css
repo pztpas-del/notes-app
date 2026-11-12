@@ -254,6 +254,9 @@ code { font-family: var(--mono); font-size: .9em; background: var(--code-bg); pa
 .schema-panel-list { flex: 1; overflow-y: auto; display: grid; align-content: start; gap: 2px; }
 .schema-panel-list button { text-align: left; border: 0; background: transparent; padding: 7px 8px; }
 .schema-panel-list button:hover { background: var(--surface); }
+.schema-panel-group { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); margin: 6px 8px 2px; }
+.schema-panel-list .schema-panel-folder { font-weight: 550; }
+.schema-panel-list .schema-panel-folder small { font-weight: 400; color: var(--text-muted); }
 .schema-name { position: absolute; z-index: 8; display: flex; gap: 6px; width: 300px; background: var(--bg); border: 1px solid var(--accent); border-radius: 12px; padding: 6px; box-shadow: 0 8px 24px rgb(0 0 0 / .2); }
 .schema-name input { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 6px 8px; }
 .schema-rel { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
