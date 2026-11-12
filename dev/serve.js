@@ -9,7 +9,7 @@ const crypto = require('crypto');
 const ROOT = path.join(__dirname, '..', 'docs');
 const PORT = Number(process.env.PORT) || 5173;
 const TYPES = {
-  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.wasm': 'application/wasm',
   '.css': 'text/css; charset=utf-8', '.webmanifest': 'application/manifest+json',
   '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json',
 };

@@ -176,6 +176,26 @@ code { font-family: var(--mono); font-size: .9em; background: var(--code-bg); pa
 #graph { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
 .graph-tools { position: absolute; left: 12px; top: 10px; display: flex; gap: 14px; align-items: center; background: var(--bg); border: 1px solid var(--border); border-radius: 12px; padding: 6px 10px; font-size: 14px; }
 .graph-tools label { display: flex; gap: 6px; align-items: center; }
+.graph-tools { flex-wrap: wrap; max-width: calc(100% - 24px); }
+.ai-find { border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--border)); color: var(--accent); background: transparent; border-radius: 9px; padding: 4px 10px; font-size: 14px; }
+.ai-find:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+#openGraph.ai-hint { color: var(--accent); box-shadow: inset 0 0 0 1.5px var(--accent); }
+/* Neural-network suggestions panel in the graph */
+.ai-panel { position: absolute; right: 12px; top: 10px; bottom: 12px; width: min(380px, calc(100% - 24px)); background: var(--bg); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 8px 24px rgb(0 0 0 / .2); display: flex; flex-direction: column; gap: 8px; padding: 12px; z-index: 7; animation: slide-left .26s var(--ease); }
+.ai-head { display: flex; justify-content: space-between; align-items: center; }
+.ai-status { margin: 0; font-size: 13.5px; color: var(--text-muted); }
+.ai-status.bad { color: var(--danger); }
+.ai-range { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-muted); }
+.ai-range input { flex: 1; accent-color: var(--accent); }
+.ai-list { flex: 1; overflow-y: auto; display: grid; align-content: start; gap: 8px; }
+.ai-row { border: 1px solid var(--border); border-radius: 12px; padding: 8px 10px; display: grid; gap: 6px; }
+.ai-pair { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.ai-name { border: 0; background: transparent; padding: 0; font-weight: 600; color: var(--text); text-align: left; }
+.ai-name:hover { color: var(--accent); }
+.ai-score { font-size: 12.5px; color: var(--accent); }
+.ai-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.ai-acts button { padding: 4px 10px; font-size: 13px; }
+.ai-acts .ai-hide { border: 0; background: transparent; color: var(--text-muted); margin-left: auto; }
 
 .settings { max-width: 640px; margin: 0 auto; padding: 24px 28px 60px; }
 .settings h1 { font-size: 24px; margin: 0 0 6px; }

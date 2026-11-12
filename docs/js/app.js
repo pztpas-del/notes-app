@@ -10,6 +10,7 @@ import { CalendarView } from './calendar.js';
 import { PushClient } from './push.js';
 import { NativeReminders, isNativeApp } from './native.js';
 import { openEditMenuAt, showMenu } from './editmenu.js';
+import { LinkFinder, addSeeAlso, DEFAULT_MIN } from './links-ai.js';
 
 const $ = id => document.getElementById(id);
 const prefs = {
@@ -43,6 +44,7 @@ const ed = createEditor($('editor'), {
     if (!current) return;
     vault.write(current, text);
     scheduleSync();
+    scheduleAutoLinks(); // only does something in the automatic mode
   },
   resolveNote: t => vault.resolve(t),
   fileUrl: name => vault.fileUrl(name),
@@ -682,6 +684,90 @@ function updateGraph(focus = prefs.get('last', null)) {
   $('graphCount').textContent = `${n} ${plural(n, 'заметка', 'заметки', 'заметок')}, ${e} ${plural(e, 'связь', 'связи', 'связей')}`;
 }
 
+// ---------- Neural network: connections between notes ----------
+let finder = null;
+const getFinder = () => finder || (finder = new LinkFinder(vault));
+const mb = n => (n / 1048576).toFixed(0);
+function aiProgressText(p) {
+  if (!p) return 'Подождите…';
+  if (p.stage === 'download') return p.total ? `Скачиваю нейросеть (один раз): ${mb(p.loaded)} из ${mb(p.total)} МБ…` : 'Скачиваю нейросеть (один раз)…';
+  return `Читаю заметки: ${p.done} из ${p.total}…`;
+}
+// Puts note b under note a on the flowchart (both are added if missing).
+function linkOnSchema(a, b) {
+  const s = vault.schema();
+  const copy = { nodes: s.nodes.map(n => ({ ...n })), edges: s.edges.map(e => ({ ...e })) };
+  const node = p => { let n = copy.nodes.find(x => x.file === p); if (!n) { n = { id: 'n' + Math.random().toString(36).slice(2, 10), file: p, x: 0, y: 0, pinned: false }; copy.nodes.push(n); } return n; };
+  const na = node(a), nb = node(b);
+  const reaches = (x, y) => { const seen = new Set([x]), st = [x]; while (st.length) { const c = st.pop(); if (c === y) return true; for (const e of copy.edges) if (e.fromNode === c && !seen.has(e.toNode)) { seen.add(e.toNode); st.push(e.toNode); } } return false; };
+  // No circles on the flowchart: if b is already above a, the arrow goes the other way.
+  const [from, to] = reaches(nb.id, na.id) ? [nb, na] : [na, nb];
+  if (!copy.edges.some(e => e.fromNode === from.id && e.toNode === to.id)) copy.edges.push({ id: 'e' + Math.random().toString(36).slice(2, 10), fromNode: from.id, toNode: to.id });
+  vault.saveSchema(copy);
+}
+async function openAiPanel() {
+  const panel = $('aiPanel');
+  panel.hidden = false;
+  const status = el('p', { className: 'ai-status', role: 'status', textContent: 'Подождите…' });
+  const list = el('div', { className: 'ai-list' });
+  const range = el('input', { type: 'range', min: '78', max: '95', step: '1', value: String(Math.round(prefs.get('aiMin', DEFAULT_MIN) * 100)), 'aria-label': 'Насколько похожими должны быть заметки' });
+  const close = el('button', { type: 'button', textContent: 'Готово' });
+  close.addEventListener('click', () => { panel.hidden = true; });
+  panel.replaceChildren(
+    el('div', { className: 'ai-head' }, el('b', { textContent: '✨ Связи от нейросети' }), close),
+    status,
+    el('label', { className: 'ai-range' }, el('span', { textContent: 'Мягче' }), range, el('span', { textContent: 'Строже' })),
+    list);
+  const f = getFinder();
+  const draw = () => {
+    const min = Number(range.value) / 100;
+    const items = f.suggestions({ min });
+    status.textContent = items.length ? `Похожие по смыслу заметки, которые ещё не связаны: ${items.length}. Ничего не меняется, пока вы не нажмёте кнопку.` : 'Новых связей не нашлось. Сдвиньте ползунок к «Мягче», чтобы увидеть менее похожие пары.';
+    list.replaceChildren();
+    for (const { a, b, score } of items.slice(0, 60)) {
+      const name = p => { const x = el('button', { type: 'button', className: 'ai-name', textContent: basename(p), title: p }); x.addEventListener('click', () => navigate(noteHash(p))); return x; };
+      const act = (text, title, fn, cls = '') => { const x = el('button', { type: 'button', textContent: text, title, className: cls }); x.addEventListener('click', fn); return x; };
+      const row = el('div', { className: 'ai-row' },
+        el('div', { className: 'ai-pair' }, name(a), el('span', { className: 'ai-score', textContent: `↔ ${Math.round(score * 100)}%` }), name(b)),
+        el('div', { className: 'ai-acts' },
+          act('Ссылкой', `Добавить в «${basename(a)}» строку «См. также: [[${basename(b)}]]»`, () => { addSeeAlso(vault, a, b); toast(`В «${basename(a)}» добавлена ссылка на «${basename(b)}»`); scheduleSync(); updateGraph(); draw(); }, 'primary'),
+          act('На схеме', `Поставить «${basename(b)}» под «${basename(a)}» на блок-схеме`, () => { linkOnSchema(a, b); toast('Связь добавлена на блок-схему'); scheduleSync(); updateGraph(); draw(); }),
+          act('Скрыть', 'Больше не предлагать эту пару', async () => { await f.hide(a, b); draw(); }, 'ai-hide')));
+      list.append(row);
+    }
+  };
+  range.addEventListener('input', () => { prefs.set('aiMin', Number(range.value) / 100); draw(); });
+  try {
+    await f.update(p => { status.textContent = aiProgressText(p); });
+    draw();
+  } catch (e) {
+    status.className = 'ai-status bad';
+    status.textContent = 'Нейросеть не запустилась: ' + e.message + (navigator.onLine ? '' : ' Для первого запуска нужен интернет.');
+  }
+}
+// Automatic mode: some time after writing stops, check the open note for similar ones.
+let aiTimer = null;
+const aiAnnounced = new Set();
+function scheduleAutoLinks() {
+  if (prefs.get('aiMode', 'button') !== 'auto') return;
+  clearTimeout(aiTimer);
+  aiTimer = setTimeout(async () => {
+    const path = current;
+    if (!path || document.hidden) return;
+    try {
+      const f = getFinder();
+      await f.update();
+      const fresh = f.suggestions({ min: prefs.get('aiMin', DEFAULT_MIN), forPath: path }).filter(s => !aiAnnounced.has(s.a + '\n' + s.b));
+      fresh.forEach(s => aiAnnounced.add(s.a + '\n' + s.b));
+      if (fresh.length) {
+        const other = fresh.map(s => basename(s.a === path ? s.b : s.a));
+        toast(`✨ К «${basename(path)}» по смыслу подходят: ${other.slice(0, 3).join(', ')}${other.length > 3 ? '…' : ''}. Граф → «Найти связи».`, 9000);
+        $('openGraph').classList.add('ai-hint');
+      }
+    } catch { /* stays quiet in automatic mode */ }
+  }, 15000);
+}
+
 // ---------- Sync ----------
 let syncTimer = null;
 function scheduleSync(delay = 8000) {
@@ -807,6 +893,7 @@ function showSettings() {
   renderYa();
   if (ya.connected()) ya.info().then(i => { yaState.info = i; renderYa(); }).catch(() => {});
   $('folderSchemaLink').checked = vault.folderConf().schemaLink;
+  $('aiMode').value = prefs.get('aiMode', 'button');
 }
 
 function readForm() {
@@ -885,6 +972,11 @@ function bind() {
   window.addEventListener('hashchange', route);
   $('newNote').addEventListener('click', () => newNote());
   $('newFolder').addEventListener('click', () => newFolder());
+  $('aiFind').addEventListener('click', () => { $('openGraph').classList.remove('ai-hint'); openAiPanel(); });
+  $('aiMode').addEventListener('change', e => {
+    prefs.set('aiMode', e.target.value);
+    toast(e.target.value === 'auto' ? 'Нейросеть будет проверять заметку через 15 секунд после того, как вы перестали писать' : 'Нейросеть ищет связи только по кнопке в графе', 6000);
+  });
   // Right-click on empty space of the list: new note or folder at the top level.
   $('tree').addEventListener('contextmenu', e => {
     if (e.target.closest('button, input')) return;
