@@ -1,9 +1,9 @@
 // Offline support: always try the network first so updates arrive at once,
 // and fall back to the saved copy when there is no connection.
-const CACHE = 'notes-app-v30';
+const CACHE = 'notes-app-v31';
 const SHELL = ['./', 'index.html', 'app.css', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
   'js/app.js', 'js/db.js', 'js/vault.js', 'js/markdown.js', 'js/graph.js', 'js/sync.js',
-  'js/editor.js', 'js/editmenu.js','js/schema.js', 'js/yadisk.js', 'js/media.js', 'js/calendar.js', 'js/calendar-data.js', 'js/push.js', 'js/native.js', 'vendor/codemirror.js'];
+  'js/editor.js', 'js/editmenu.js','js/schema.js', 'js/yadisk.js', 'js/media.js', 'js/calendar.js', 'js/calendar-data.js', 'js/push.js', 'js/native.js', 'js/goals.js', 'js/goals-data.js', 'vendor/codemirror.js'];
 
 self.addEventListener('install', e => {
   // cache: 'reload' — take the files from the site, not from the browser's HTTP cache.

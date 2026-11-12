@@ -5,6 +5,7 @@ import {
   pad, dkey, tkey, hm, parse, addDays, addMinutes, startOfDay, sameDay, newId, isoDow, weekOfMonth,
   MONTHS, MONTHS_GEN, WD, WD_LONG, COLORS, REMIND_PRESETS, DAY_KEEP,
 } from './calendar-data.js';
+import { GoalsStore, isDue, markDone, markValue } from './goals-data.js';
 
 const HOUR = 48; // pixels per hour in day/week views
 const SNAP = 15; // minutes
@@ -35,6 +36,7 @@ export class CalendarView {
     this.vault = vault;
     this.toast = toast;
     this.store = new CalendarStore(vault);
+    this.goals = new GoalsStore(vault);
     this.reminders = new Reminders(this.store, notify);
     this.view = prefsGet('view', 'week');
     this.anchor = startOfDay(new Date());
@@ -307,6 +309,7 @@ export class CalendarView {
       if (h) cell.append(el('div', { className: 'holiday', textContent: h }));
       for (const o of occ.filter(o => (o.data.allDay || o.end - o.start >= 864e5) && o.start < addDays(d, 1) && o.end > d)) cell.append(this.chip(o, conf));
       for (const t of todos.filter(t => t.due === dkey(d))) cell.append(this.todoChip(t));
+      cell.append(...this.goalChips(d));
       cell.addEventListener('dblclick', e => { if (e.target === cell) this.newEvent(d, { allDay: true }); });
       allday.append(cell);
     }
@@ -461,6 +464,34 @@ export class CalendarView {
     return c;
   }
 
+  // Goal deadlines (always) and habits of the day (when "Привычки в календаре" is on).
+  goalChips(d) {
+    const key = dkey(d), out = [];
+    for (const g of this.goals.goals()) {
+      if (g.due !== key || g.status === 'done') continue;
+      const c = el('div', { className: 'ev-chip goal-chip', textContent: '🎯 ' + g.title, title: 'Срок цели' });
+      c.addEventListener('click', e => { e.stopPropagation(); location.hash = '#goals'; });
+      out.push(c);
+    }
+    if (!this.goals.conf().habitsInCalendar) return out;
+    for (const h of this.goals.habits()) {
+      // Only from the day the habit was made up to today.
+      if (h.archived || !isDue(h, d) || d > new Date() || (h.created && d < startOfDay(new Date(h.created)))) continue;
+      const done = markDone(h, key);
+      const label = (h.emoji || '✅') + ' ' + h.name + (h.target ? ` ${markValue(h, key)}/${h.target.amount}` : '');
+      const c = el('button', { type: 'button', className: 'habit-chip' + (done ? ' on' : ''), style: { '--hc': h.color || '#3fb27f' }, textContent: (done ? '✓ ' : '') + label,
+        title: h.target ? 'Открыть «Цели», чтобы ввести число' : done ? 'Снять отметку' : 'Отметить выполненной' });
+      c.addEventListener('click', e => {
+        e.stopPropagation();
+        if (h.target) { location.hash = '#goals'; return; }
+        this.goals.setMark(h.id, key, !done);
+        this.render();
+      });
+      out.push(c);
+    }
+    return out;
+  }
+
   todoChip(t) {
     const box = el('input', { type: 'checkbox', checked: Boolean(t.done) });
     box.addEventListener('change', () => this.toggleTodo(t.id, box.checked));
@@ -557,7 +588,7 @@ export class CalendarView {
       if (note) cell.append(el('div', { className: 'month-note-text', textContent: note.split('\n').find(Boolean) || '' }));
       if (h) cell.append(el('div', { className: 'holiday', textContent: h }));
       const list = occ.filter(o => o.start < addDays(d, 1) && o.end > d);
-      const items = [...list.map(o => this.chip(o, conf)), ...todos.filter(t => t.due === dkey(d)).map(t => this.todoChip(t))];
+      const items = [...list.map(o => this.chip(o, conf)), ...todos.filter(t => t.due === dkey(d)).map(t => this.todoChip(t)), ...this.goalChips(d)];
       const maxShown = 3;
       items.slice(0, maxShown).forEach(x => cell.append(x));
       if (items.length > maxShown) cell.append(btn(`ещё ${items.length - maxShown}`, () => { this.anchor = d; this.setView('day'); }, 'month-more'));
@@ -577,10 +608,12 @@ export class CalendarView {
     for (let d = from; d < to; d = addDays(d, 1)) {
       const items = occ.filter(o => o.start < addDays(d, 1) && o.end > d);
       const note = this.store.dayNote(dkey(d));
-      if (!items.length && !note) continue;
+      const extra = this.goalChips(d);
+      if (!items.length && !note && !extra.length) continue;
       shown++;
       const rel = sameDay(d, new Date()) ? 'Сегодня, ' : sameDay(d, addDays(new Date(), 1)) ? 'Завтра, ' : '';
       list.append(el('h2', { className: 'agenda-day' + (sameDay(d, new Date()) ? ' today' : ''), textContent: rel + dayTitle(d) }));
+      if (extra.length) list.append(el('div', { className: 'agenda-extra' }, ...extra));
       if (note) {
         const day = d;
         const n = el('button', { type: 'button', className: 'agenda-note', textContent: '📝 ' + note });

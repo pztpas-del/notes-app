@@ -27,6 +27,97 @@
   --graph-line: #4a4a54; --graph-node: #8a8a96; --graph-missing: #50505a;
   color-scheme: dark;
 }
+/* ---------- Goals and habits ---------- */
+.goals-view { position: relative; display: flex; flex-direction: column; overflow: hidden; }
+.goals-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.goals-title { font-size: 18px; margin: 0 6px 0 0; }
+.goals-tabs { display: inline-flex; background: var(--surface); border-radius: 10px; padding: 2px; gap: 2px; }
+.goals-tabs button { border: 0; background: transparent; border-radius: 8px; padding: 5px 12px; }
+.goals-tabs button[aria-selected="true"] { background: var(--bg); color: var(--accent); font-weight: 600; box-shadow: 0 1px 3px rgb(0 0 0 / .15); }
+.goals-cal-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--text-muted); cursor: pointer; }
+.goals-cal-toggle input { accent-color: var(--accent); }
+.goals-spacer { flex: 1; }
+.goals-body { flex: 1; overflow-y: auto; padding: 14px 16px 80px; }
+.goals-today, .goals-list { max-width: 760px; margin: 0 auto; display: grid; gap: 10px; }
+.goals-date { font-size: 16px; margin: 0; }
+.goals-sub { font-size: 14px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); margin: 14px 0 2px; display: flex; align-items: center; gap: 6px; }
+.goals-sub .dot { background: var(--hc); }
+.goals-empty { display: grid; gap: 4px; padding: 26px 16px; text-align: center; border: 1.5px dashed var(--border); border-radius: 16px; color: var(--text-muted); }
+.goals-empty b { color: var(--text); }
+.goals-daybar { height: 8px; border-radius: 6px; background: var(--surface); overflow: hidden; }
+.goals-daybar-fill { height: 100%; background: var(--accent); border-radius: 6px; transition: width .3s var(--ease); }
+.goals-link { border: 0; background: transparent; color: var(--accent); padding: 4px 6px; justify-self: start; }
+.goals-link.small { font-size: 12.5px; padding: 2px 6px; color: var(--text-muted); }
+.goals-link.small:hover { color: var(--accent); }
+.habit-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-left: 4px solid var(--hc); border-radius: 14px; background: var(--bg); }
+.habit-row.done { background: color-mix(in srgb, var(--hc) 9%, var(--bg)); }
+.habit-emoji { font-size: 22px; width: 30px; text-align: center; flex: none; }
+.habit-emoji.big { font-size: 28px; width: 38px; }
+.habit-main { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.habit-main b { overflow-wrap: anywhere; }
+.habit-check { flex: none; width: 44px; height: 44px; border-radius: 50%; border: 2px solid var(--hc); background: transparent; color: #fff; font-size: 22px; font-weight: 700; padding: 0; }
+.habit-check.on { background: var(--hc); }
+.habit-counter { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.habit-counter.on .habit-num { border-color: var(--hc); }
+.habit-step { width: 36px; height: 36px; border-radius: 50%; padding: 0; font-size: 18px; flex: none; }
+.habit-num-wrap { display: inline-flex; align-items: baseline; gap: 4px; }
+.habit-num { width: 62px; text-align: center; font: inherit; font-weight: 600; padding: 6px 4px; border: 1.5px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--text); }
+.habit-card, .goal-card { border: 1px solid var(--border); border-radius: 16px; padding: 12px 14px; display: grid; gap: 10px; background: var(--bg); }
+.habit-card { border-top: 4px solid var(--hc); }
+.habit-card.archived { opacity: .6; }
+.habit-card-head, .goal-card-head { display: flex; align-items: center; gap: 10px; }
+.habit-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.habit-stat { display: grid; text-align: center; background: var(--side); border-radius: 10px; padding: 6px 4px; }
+.habit-stat b { font-size: 15px; }
+.habit-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.habit-day { display: grid; justify-items: center; gap: 0; padding: 4px 0; border-radius: 10px; border: 1.5px solid var(--border); background: color-mix(in srgb, var(--hc) calc(var(--share, 0) * 85%), transparent); font-size: 12px; }
+.habit-day span { color: var(--text-muted); font-size: 11px; }
+.habit-day.on { border-color: var(--hc); color: #fff; }
+.habit-day.on span { color: rgb(255 255 255 / .8); }
+.habit-day.off { opacity: .45; }
+.heat-wrap { overflow-x: auto; padding-bottom: 4px; }
+.heat { display: flex; gap: 3px; width: max-content; }
+.heat-col { display: grid; grid-template-rows: repeat(7, 11px); gap: 3px; }
+.heat-cell { width: 11px; height: 11px; border-radius: 3px; background: var(--surface); }
+.heat-cell.on { background: color-mix(in srgb, var(--hc) calc(25% + var(--share) * 75%), var(--surface)); }
+.heat-cell.off:not(.on) { opacity: .45; }
+.heat-cell.future { background: transparent; }
+.goal-card { border-left: 4px solid var(--hc); }
+.goal-card.status-done { opacity: .7; }
+.goal-card.status-paused { opacity: .8; border-left-style: dashed; }
+.goal-card .late { color: var(--danger); }
+.goal-bar { height: 8px; border-radius: 6px; background: var(--surface); overflow: hidden; }
+.goal-bar-fill { height: 100%; background: var(--hc, var(--accent)); border-radius: 6px; transition: width .3s var(--ease); }
+.goal-desc { margin: 0; font-size: 14px; color: var(--text-muted); white-space: pre-wrap; }
+.goal-steps { display: grid; gap: 2px; }
+.goal-step { display: flex; align-items: center; gap: 6px; }
+.goal-step label { flex: 1; display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 3px 0; min-width: 0; }
+.goal-step input { width: 17px; height: 17px; accent-color: var(--hc); margin: 0; flex: none; }
+.goal-step.done span { text-decoration: line-through; color: var(--text-muted); }
+.goal-steps.edit input { flex: 1; min-width: 0; }
+.goal-mini { display: grid; gap: 6px; text-align: left; border: 1px solid var(--border); border-left: 4px solid var(--hc); border-radius: 12px; background: var(--bg); padding: 8px 12px; }
+.goal-mini-top { display: flex; justify-content: space-between; gap: 8px; }
+.goals-modal { position: absolute; inset: 0; z-index: 40; background: rgb(0 0 0 / .35); display: grid; place-items: center; padding: 16px; animation: fade .2s var(--ease); }
+.goals-modal .ce { background: var(--bg); border-radius: 18px; padding: 18px; width: min(560px, 100%); max-height: 100%; overflow-y: auto; display: grid; gap: 12px; box-shadow: 0 20px 60px rgb(0 0 0 / .35); }
+.goals-modal .ce input, .goals-modal .ce select, .goals-modal .ce textarea { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 7px 10px; font: inherit; color: inherit; min-width: 0; }
+.goals-modal .ce textarea { width: 100%; resize: vertical; }
+.goals-modal .ce > input.ce-title { width: 100%; }
+.goals-modal .ce-row .ce-title { flex: 1; }
+.habit-emoji-input { width: 54px; text-align: center; font-size: 20px !important; }
+/* in the calendar */
+.goal-chip { border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.habit-chip { display: block; width: 100%; text-align: left; font-size: 12px; line-height: 1.35; padding: 1px 6px; border-radius: 6px; border: 1px dashed color-mix(in srgb, var(--hc) 70%, var(--border)); background: transparent; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.habit-chip.on { background: color-mix(in srgb, var(--hc) 22%, transparent); border-style: solid; }
+.agenda-extra { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 4px 10px; }
+.agenda-extra .habit-chip, .agenda-extra .ev-chip { width: auto; }
+@media (max-width: 640px) {
+  .goals-head { padding: 8px 10px; }
+  .goals-title { display: none; }
+  .goals-body { padding: 10px 10px 90px; }
+  .habit-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .goals-modal .ce-row .ce-label { min-width: 0; }
+}
+
 /* Theme choice in the settings */
 .theme-pick { display: inline-flex; background: var(--surface); border-radius: 12px; padding: 3px; gap: 2px; flex-wrap: wrap; }
 .theme-pick button { border: 0; background: transparent; border-radius: 9px; padding: 6px 12px; }

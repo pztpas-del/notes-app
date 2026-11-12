@@ -1,6 +1,8 @@
 // Calendar data: events, calendars (categories), to-do lists, repeats,
 // reminders and .ics import/export. Everything is stored as JSON files in the
 // notes repository under "Календарь/" — synced with GitHub, hidden from notes.
+import { habitReminderItems } from './goals-data.js';
+
 export const CAL_DIR = 'Календарь';
 const EV_DIR = CAL_DIR + '/События';
 const CONF = CAL_DIR + '/календари.json';
@@ -300,6 +302,8 @@ export function scheduleItems(store, days = 60, now = new Date()) {
     const late = todos.filter(t => t.due < dkey(day)).length;
     if (today || late) items.push({ id: 'digest|' + dkey(day), at: at.getTime(), title: 'Дела на сегодня', body: [today && `запланировано: ${today}`, late && `просрочено: ${late}`].filter(Boolean).join(', '), url: '#calendar' });
   }
+  // Habit reminders ("в 21:00 — чтение") travel the same way as event reminders.
+  if (store.vault) items.push(...habitReminderItems(store.vault, days, now));
   return items.sort((a, b) => a.at - b.at);
 }
 

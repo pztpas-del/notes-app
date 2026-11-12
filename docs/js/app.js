@@ -11,6 +11,7 @@ import { PushClient } from './push.js';
 import { NativeReminders, isNativeApp } from './native.js';
 import { openEditMenuAt, showMenu } from './editmenu.js';
 import { LinkFinder, addSeeAlso, DEFAULT_MIN } from './links-ai.js';
+import { GoalsView } from './goals.js';
 
 const $ = id => document.getElementById(id);
 const prefs = {
@@ -70,7 +71,9 @@ const fileHash = p => '#file=' + encodeURIComponent(p);
 function navigate(hash) { if (location.hash === hash) route(); else location.hash = hash; }
 
 function showView(id, crumb) {
-  for (const v of ['noteView', 'fileView', 'graphView', 'schemaView', 'calendarView', 'settingsView', 'emptyView']) $(v).hidden = v !== id;
+  for (const v of ['noteView', 'fileView', 'graphView', 'schemaView', 'calendarView', 'goalsView', 'settingsView', 'emptyView']) $(v).hidden = v !== id;
+  if (id !== 'goalsView') goals.hide();
+  $('openGoals').classList.toggle('on', id === 'goalsView');
   $('modeBtn').hidden = $('moreBtn').hidden = $('attachBtn').hidden = $('panelBtn').hidden = id !== 'noteView';
   $('formatBtn').hidden = id !== 'noteView' || mode === 'read';
   if (id !== 'noteView') current = null;
@@ -97,6 +100,7 @@ function route() {
   } else if (h === '#graph') showGraph();
   else if (h === '#schema' || h.startsWith('#schema=')) showSchema(h.startsWith('#schema=') ? decodeURIComponent(h.slice(8)) : null);
   else if (h === '#calendar' || h.startsWith('#calendar=')) showCalendar(h.startsWith('#calendar=') ? decodeURIComponent(h.slice(10)) : null);
+  else if (h === '#goals') { showView('goalsView', 'Цели и привычки'); goals.show(); }
   else if (h === '#settings') showSettings();
   else {
     const last = prefs.get('last', null);
@@ -733,6 +737,7 @@ async function notify(title, body, tag, url) {
   } catch { try { new Notification(title, opts); } catch { /* not allowed */ } }
 }
 const calendar = new CalendarView($('calendarView'), { vault, toast: (t, ms) => toast(t, ms), notify });
+const goals = new GoalsView($('goalsView'), { vault, toast: (t, ms) => toast(t, ms), openNote: p => navigate(noteHash(p)) });
 const push = new PushClient(vault, calendar.store);
 calendar.push = isNativeApp() ? null : push;
 const nativeReminders = new NativeReminders(calendar.store, url => { location.hash = url.replace(/^[^#]*/, ''); });
@@ -1070,6 +1075,7 @@ vault.onChange(() => {
     if (!$('graphView').hidden && graph) updateGraph();
     if (schema) schema.refresh();
     calendar.refresh();
+    goals.refresh();
     remindersChanged();
     if (current) renderPanel();
   }, 150);
@@ -1149,6 +1155,7 @@ function bind() {
   $('openGraph').addEventListener('click', () => navigate('#graph'));
   $('openSchema').addEventListener('click', () => navigate('#schema'));
   $('openCalendar').addEventListener('click', () => navigate('#calendar'));
+  $('openGoals').addEventListener('click', () => navigate('#goals'));
   $('openSettings').addEventListener('click', () => navigate('#settings'));
   $('syncStatus').addEventListener('click', () => navigate('#settings'));
   $('menuBtn').addEventListener('click', () => { if (isPhone()) openDrawer(); else setSidebar(true); });
