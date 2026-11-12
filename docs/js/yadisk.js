@@ -51,11 +51,16 @@ export class YaDisk {
     if (!this.auth) throw new YaError('Яндекс Диск не подключён.', 'auth');
     const q = new URLSearchParams(params).toString();
     let res;
+    // A request that hangs (seen behind some VPNs) must not block uploads forever.
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 20000);
     try {
-      res = await fetch(`${API}${path}${q ? '?' + q : ''}`, { method, cache: 'no-store', headers: { Authorization: `OAuth ${this.auth.token}`, Accept: 'application/json' } });
+      res = await fetch(`${API}${path}${q ? '?' + q : ''}`, { method, cache: 'no-store', signal: ctl.signal, headers: { Authorization: `OAuth ${this.auth.token}`, Accept: 'application/json' } });
     } catch {
-      throw new YaError('Нет связи с Яндекс Диском.', 'network');
-    }
+      throw new YaError(navigator.onLine
+        ? 'Яндекс Диск не отвечает. Если на устройстве включён VPN, выключите его или добавьте Яндекс в исключения VPN: через многие VPN Яндекс Диск не пускает загрузку.'
+        : 'Нет интернета: файлы загрузятся на Яндекс Диск, когда он появится.', 'network');
+    } finally { clearTimeout(timer); }
     if (res.status === 401) { this.disconnect(); throw new YaError('Доступ к Яндекс Диску истёк или отозван. Подключите его заново в настройках.', 'auth'); }
     if (res.status === 204 || res.status === 202 && method === 'DELETE') return null;
     let body = null;

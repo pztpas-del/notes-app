@@ -122,6 +122,7 @@ export class MediaStore {
   }
   async runFlush() {
     if (!this.ya.connected() || !navigator.onLine) return null;
+    let firstError = null;
     for (const m of [...this.local.values()].filter(x => x.pending)) {
       const rec = await db.media.get(m.path);
       if (!rec) { this.local.delete(m.path); continue; }
@@ -129,7 +130,11 @@ export class MediaStore {
         await this.ya.upload(rec.path, rec.blob);
       } catch (e) {
         this.changed();
-        throw e;
+        // No connection or no access: the other files would fail the same way, stop here.
+        if (e.code === 'network' || e.code === 'auth' || e.code === 'full') throw e;
+        // A problem with this one file: report it, but still upload the rest.
+        firstError = firstError || new Error(`Файл «${rec.path.split('/').pop()}» не загрузился: ${e.message}`);
+        continue;
       }
       rec.pending = false;
       await db.media.put(rec);
@@ -139,6 +144,7 @@ export class MediaStore {
       this.changed();
     }
     this.evict();
+    if (firstError) throw firstError;
     return null;
   }
 
