@@ -245,12 +245,23 @@ export class GoalsView {
   // ---------- Goals ----------
   renderGoals() {
     const habits = this.store.habits();
-    const goals = this.store.goals();
-    const box = el('div', { className: 'goals-list' });
-    if (!goals.length) box.append(this.emptyHint('Целей пока нет', 'Нажмите «+ Цель». Прогресс можно считать по шагам («сдать сессию»), по числу («прочитать 20 книг») или по привычке.'));
-    const order = { active: 0, paused: 1, done: 2 };
+    const all = this.store.goals();
+    // Goals in work, put off, and done each have their own list.
+    const filter = prefsGet('goalFilter', 'active');
+    const count = s => all.filter(g => (g.status || 'active') === s).length;
+    const seg = el('div', { className: 'goals-filter', role: 'tablist' });
+    for (const [id, text] of [['active', 'В работе'], ['paused', 'Отложенные'], ['done', 'Выполненные']]) {
+      const n = count(id);
+      const b = btn(`${text}${n ? ` · ${n}` : ''}`, () => { prefsSet('goalFilter', id); this.render(); });
+      b.setAttribute('aria-selected', String(filter === id));
+      seg.append(b);
+    }
+    const goals = all.filter(g => (g.status || 'active') === filter);
+    const box = el('div', { className: 'goals-list' }, seg);
+    if (!all.length) box.append(this.emptyHint('Целей пока нет', 'Нажмите «+ Цель». Прогресс можно считать по шагам («сдать сессию»), по числу («прочитать 20 книг») или по привычке.'));
+    else if (!goals.length) box.append(el('p', { className: 'muted', textContent: filter === 'done' ? 'Выполненных целей пока нет. Цель попадёт сюда, когда в «Изменить» вы поставите статус «Выполнена» или нажмёте «✓ Выполнена».' : filter === 'paused' ? 'Отложенных целей нет.' : 'Все цели выполнены или отложены. Новую можно добавить кнопкой «+ Цель».' }));
     for (const [areaId, areaName, areaColor] of AREAS) {
-      const mine = goals.filter(g => (g.area || 'other') === areaId).sort((a, b) => order[a.status || 'active'] - order[b.status || 'active'] || String(a.due || '9').localeCompare(String(b.due || '9')));
+      const mine = goals.filter(g => (g.area || 'other') === areaId).sort((a, b) => String(a.due || '9').localeCompare(String(b.due || '9')));
       if (!mine.length) continue;
       box.append(el('h2', { className: 'goals-sub', style: { '--hc': areaColor } }, el('span', { className: 'dot' }), ' ' + areaName));
       for (const g of mine) box.append(this.goalCard(g, habits, areaColor));
@@ -283,6 +294,7 @@ export class GoalsView {
         el('div', { className: 'habit-main' },
           el('b', { textContent: (g.status === 'done' ? '✓ ' : '') + g.title }),
           el('span', { className: 'muted small' + (due && due.startsWith('просрочено') ? ' late' : ''), textContent: [progressText(g, habits), due, g.status === 'paused' ? 'отложена' : null].filter(Boolean).join(' · ') })),
+        this.statusButtons(g),
         btn('Изменить', () => this.editGoal(g))),
       el('div', { className: 'goal-bar' }, el('div', { className: 'goal-bar-fill', style: { width: p * 100 + '%' } })));
     if (g.description) card.append(el('p', { className: 'goal-desc', textContent: g.description }));
@@ -304,10 +316,20 @@ export class GoalsView {
     if (g.note && this.vault.get(g.note)) card.append(btn('📄 ' + g.note.split('/').pop().replace(/\.md$/i, ''), () => this.openNote(g.note), 'goals-link'));
     return card;
   }
+  // Quick moves between the lists: done / put off / back to work.
+  statusButtons(g) {
+    const set = (status, msg) => { const x = structuredClone(g); x.status = status; this.store.saveGoal(x); this.render(); this.toast(msg); };
+    const s = g.status || 'active';
+    const box = el('div', { className: 'goal-status-btns' });
+    if (s === 'active') box.append(btn('✓ Выполнена', () => set('done', `🎉 Цель «${g.title}» выполнена — она в списке «Выполненные»`), 'goal-done-btn'), btn('Отложить', () => set('paused', `Цель «${g.title}» в списке «Отложенные»`)));
+    else box.append(btn('↩ Вернуть в работу', () => set('active', `Цель «${g.title}» снова в работе`)));
+    return box;
+  }
+
   // Saves a goal after a tick; when everything is done, offers to close it.
   finishCheck(g) {
     this.store.saveGoal(g);
-    if (g.status === 'active' && goalProgress(g, this.store.habits()) >= 1) this.toast(`🎉 Цель «${g.title}» выполнена на 100%! Отметить её выполненной можно в «Изменить».`, 7000);
+    if (g.status === 'active' && goalProgress(g, this.store.habits()) >= 1) this.toast(`🎉 Цель «${g.title}» выполнена на 100%! Нажмите «✓ Выполнена», чтобы убрать её в список выполненных.`, 7000);
     this.render();
   }
   stepToTodo(g, s) {

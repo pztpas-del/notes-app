@@ -83,6 +83,13 @@
 .heat-cell.off:not(.on) { opacity: .45; }
 .heat-cell.future { background: transparent; }
 .goal-card { border-left: 4px solid var(--hc); }
+.goals-filter { display: inline-flex; flex-wrap: wrap; gap: 2px; background: var(--surface); border-radius: 10px; padding: 2px; justify-self: start; }
+.goals-filter button { border: 0; background: transparent; border-radius: 8px; padding: 5px 12px; font-size: 14px; }
+.goals-filter button[aria-selected="true"] { background: var(--bg); color: var(--accent); font-weight: 600; box-shadow: 0 1px 3px rgb(0 0 0 / .15); }
+.goal-status-btns { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.goal-status-btns button { padding: 5px 10px; font-size: 13px; }
+.goal-done-btn { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+@media (max-width: 640px) { .goal-card-head { flex-wrap: wrap; } .goal-card-head .habit-main { flex-basis: 100%; } }
 .goal-card.status-done { opacity: .7; }
 .goal-card.status-paused { opacity: .8; border-left-style: dashed; }
 .goal-card .late { color: var(--danger); }
