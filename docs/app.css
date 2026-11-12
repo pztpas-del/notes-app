@@ -9,8 +9,10 @@
   --ease: cubic-bezier(.22, .8, .26, 1);
   color-scheme: light;
 }
+/* Dark theme: when the system is dark (unless "Светлая" is chosen in the settings),
+   or always when "Тёмная" is chosen. data-theme is set on <html> from the settings. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #1e1e22; --side: #26262b; --surface: #303037; --border: #3a3a42;
     --text: #dddde3; --text-muted: #9a9aa6; --accent: #8f74ff; --accent-text: #ffffff;
     --link: #a993ff; --selection: rgb(143 116 255 / .32); --code-bg: #2b2b31; --mark: #5c5121; --danger: #ff7b8f;
@@ -18,6 +20,17 @@
     color-scheme: dark;
   }
 }
+:root[data-theme="dark"] {
+  --bg: #1e1e22; --side: #26262b; --surface: #303037; --border: #3a3a42;
+  --text: #dddde3; --text-muted: #9a9aa6; --accent: #8f74ff; --accent-text: #ffffff;
+  --link: #a993ff; --selection: rgb(143 116 255 / .32); --code-bg: #2b2b31; --mark: #5c5121; --danger: #ff7b8f;
+  --graph-line: #4a4a54; --graph-node: #8a8a96; --graph-missing: #50505a;
+  color-scheme: dark;
+}
+/* Theme choice in the settings */
+.theme-pick { display: inline-flex; background: var(--surface); border-radius: 12px; padding: 3px; gap: 2px; flex-wrap: wrap; }
+.theme-pick button { border: 0; background: transparent; border-radius: 9px; padding: 6px 12px; }
+.theme-pick button[aria-pressed="true"] { background: var(--bg); color: var(--accent); font-weight: 600; box-shadow: 0 1px 3px rgb(0 0 0 / .15); }
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 body { background: var(--bg); color: var(--text); font: 15px/1.55 var(--font); overflow: hidden; }

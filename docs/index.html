@@ -8,6 +8,19 @@
 <title>Заметки</title>
 <meta name="theme-color" content="#1e1e22" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#f6f6f8" media="(prefers-color-scheme: light)">
+<!-- The chosen theme is applied before anything is drawn, so the page does not flash. -->
+<script>
+  (function () {
+    try {
+      var t = JSON.parse(localStorage.getItem('notes.theme') || '"system"');
+      if (t === 'light' || t === 'dark') {
+        document.documentElement.dataset.theme = t;
+        var metas = document.querySelectorAll('meta[name="theme-color"]');
+        for (var i = 0; i < metas.length; i++) metas[i].content = t === 'dark' ? '#1e1e22' : '#f6f6f8';
+      }
+    } catch (e) { /* storage blocked: follow the system */ }
+  })();
+</script>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
@@ -108,6 +121,13 @@
           </div>
           <p id="settingsMsg" class="form-msg" role="status"></p>
         </form>
+        <h2>Оформление</h2>
+        <div class="theme-pick" id="themePick" role="group" aria-label="Тема">
+          <button type="button" data-theme-value="system">Как в системе</button>
+          <button type="button" data-theme-value="light">☀ Светлая</button>
+          <button type="button" data-theme-value="dark">☾ Тёмная</button>
+        </div>
+        <p class="muted">Своя для каждого устройства.</p>
         <h2>Картинки и файлы — Яндекс Диск</h2>
         <p class="muted">Картинки, видео и файлы из заметок хранятся на вашем Яндекс Диске, в папке «Приложения/Заметки». На устройство они скачиваются, только когда вы их открываете. Программа видит только эту папку, остальной Диск ей недоступен.</p>
         <p id="yaStatus" class="form-msg" role="status"></p>

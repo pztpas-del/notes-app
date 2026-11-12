@@ -985,6 +985,22 @@ function showSettings() {
   if (ya.connected()) ya.info().then(i => { yaState.info = i; renderYa(); }).catch(() => {});
   $('folderSchemaLink').checked = vault.folderConf().schemaLink;
   $('aiMode').value = prefs.get('aiMode', 'button');
+  renderThemePick();
+}
+
+// ---------- Theme: as in the system, light or dark (this device only) ----------
+function applyTheme(t) {
+  const root = document.documentElement;
+  if (t === 'light' || t === 'dark') root.dataset.theme = t; else delete root.dataset.theme;
+  const dark = t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+  document.querySelectorAll('meta[name="theme-color"]').forEach(m => { m.content = dark ? '#1e1e22' : '#f6f6f8'; });
+  // The graph and the flowchart draw with colours read from the page: redraw them.
+  if (graph && !$('graphView').hidden) updateGraph();
+  if (rpGraph && rp.open) renderPanel();
+}
+function renderThemePick() {
+  const t = prefs.get('theme', 'system');
+  $('themePick').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.themeValue === t)));
 }
 
 function readForm() {
@@ -1109,6 +1125,14 @@ function bind() {
     tree.addEventListener('dragend', () => { drag = null; clear(); });
   }
   $('aiFind').addEventListener('click', () => { $('openGraph').classList.remove('ai-hint'); openAiPanel(); });
+  $('themePick').addEventListener('click', e => {
+    const b = e.target.closest('[data-theme-value]');
+    if (!b) return;
+    prefs.set('theme', b.dataset.themeValue);
+    applyTheme(b.dataset.themeValue);
+    renderThemePick();
+  });
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyTheme(prefs.get('theme', 'system')));
   $('aiMode').addEventListener('change', e => {
     prefs.set('aiMode', e.target.value);
     toast(e.target.value === 'auto' ? 'Нейросеть будет проверять заметку через 15 секунд после того, как вы перестали писать' : 'Нейросеть ищет связи только по кнопке в графе', 6000);
