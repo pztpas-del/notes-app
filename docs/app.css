@@ -229,6 +229,13 @@ code { font-family: var(--mono); font-size: .9em; background: var(--code-bg); pa
 .sblock.target { border-color: var(--accent); background: var(--side); }
 .sblock.dragging { opacity: .9; box-shadow: 0 8px 24px rgb(0 0 0 / .25); cursor: grabbing; }
 .sblock.missing { border-style: dashed; opacity: .7; }
+.sblock.folder { background: color-mix(in srgb, var(--accent) 10%, var(--bg)); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.sblock.folder .sblock-sub { color: var(--accent); }
+/* Folders in the notes list */
+.tree .folder-linked { margin-left: auto; font-size: 12px; color: var(--accent); opacity: .8; }
+.tree .folder-rename { width: 100%; box-sizing: border-box; font: inherit; font-weight: 550; padding: 5px 8px; border: 1px solid var(--accent); border-radius: 8px; background: var(--bg); color: var(--text); outline: none; min-height: 32px; }
+.check-row { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; margin: 4px 0; }
+.check-row input { margin-top: 4px; accent-color: var(--accent); }
 .sblock-title { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sblock-sub { font-size: 12.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
 .sblock-handle { position: absolute; left: 50%; bottom: -9px; width: 16px; height: 16px; margin-left: -8px; border-radius: 50%; background: var(--bg); border: 2px solid var(--accent); cursor: crosshair; touch-action: none; }

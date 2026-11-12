@@ -196,7 +196,7 @@ export class SchemaView {
     for (const n of this.s.nodes) n.pinned = false;
     this.autoPlace(); this.save(); this.render(); this.tween(prev); this.smooth(() => this.fit());
   }
-  title(n) { return n ? basename(n.file) : ''; }
+  title(n) { return !n ? '' : n.folder !== undefined ? n.folder.split('/').pop() : basename(n.file); }
 
   // ---------- Showing ----------
   show(focusPath, { autoAdd = true } = {}) {
@@ -299,10 +299,13 @@ export class SchemaView {
   render() {
     this.blocks.replaceChildren();
     for (const n of this.s.nodes) {
-      const note = this.vault.get(n.file);
-      const first = note ? stripCode(note.content).split('\n').map(l => l.replace(/^[#>*\-+\s]+|\[[ xX]\]\s*/g, '').trim()).find(Boolean) || '' : 'Заметка удалена или ещё не пришла';
-      const b = el('div', { className: 'sblock' + (note ? '' : ' missing') + (this.sel?.type === 'node' && this.sel.id === n.id ? ' selected' : '') + (this.compact && n.file === this.focusPath ? ' current' : '') },
-        el('div', { className: 'sblock-title', textContent: this.title(n) }),
+      const isFolder = n.folder !== undefined;
+      const note = isFolder ? null : this.vault.get(n.file);
+      const count = isFolder ? this.vault.notesIn(n.folder).length : 0;
+      const first = isFolder ? `Папка · заметок: ${count}`
+        : note ? stripCode(note.content).split('\n').map(l => l.replace(/^[#>*\-+\s]+|\[[ xX]\]\s*/g, '').trim()).find(Boolean) || '' : 'Заметка удалена или ещё не пришла';
+      const b = el('div', { className: 'sblock' + (isFolder ? ' folder' : note ? '' : ' missing') + (this.sel?.type === 'node' && this.sel.id === n.id ? ' selected' : '') + (this.compact && n.file && n.file === this.focusPath ? ' current' : '') },
+        el('div', { className: 'sblock-title', textContent: (isFolder ? '📁 ' : '') + this.title(n) }),
         el('div', { className: 'sblock-sub', textContent: first.replace(/\[\[([^\]|]+\|)?([^\]]+)\]\]/g, '$2').slice(0, 80) }),
         el('div', { className: 'sblock-handle', title: 'Потяните к другому блоку, чтобы связать' }));
       b.dataset.id = n.id;
@@ -341,8 +344,8 @@ export class SchemaView {
       const n = this.node(this.sel.id);
       if (!n) { bar.hidden = true; return; }
       if (!this.compact) bar.append(el('span', { className: 'schema-selname', textContent: this.title(n) }));
-      if (this.vault.get(n.file) && !(this.compact && n.file === this.focusPath)) bar.append(btn('Открыть', () => this.openNote(n.file), 'primary'));
-      bar.append(btn('Добавить ниже', () => this.askName(n.id, null)), btn('Убрать со схемы', () => this.removeSelected(), 'danger-text'));
+      if (n.file && this.vault.get(n.file) && !(this.compact && n.file === this.focusPath)) bar.append(btn('Открыть', () => this.openNote(n.file), 'primary'));
+      bar.append(btn(n.folder !== undefined ? 'Новая заметка в папке' : 'Добавить ниже', () => this.askName(n.id, null)), btn('Убрать со схемы', () => this.removeSelected(), 'danger-text'));
     } else {
       const e = this.s.edges.find(x => x.id === this.sel.id);
       if (!e) { bar.hidden = true; return; }
@@ -406,9 +409,11 @@ export class SchemaView {
   commitName() {
     const name = cleanTitle(this.nameInput.value);
     if (!name) { this.nameInput.focus(); return; }
-    let path = this.vault.findPath(name + '.md') || this.vault.resolve(name);
-    if (!path) { path = this.vault.uniquePath('', name); this.vault.write(path, ''); }
     const parent = this.pendingParent;
+    // "Добавить ниже" on a folder makes the note inside that folder.
+    const dir = this.node(parent)?.folder;
+    let path = dir !== undefined ? null : this.vault.findPath(name + '.md') || this.vault.resolve(name);
+    if (!path) { path = this.vault.uniquePath(dir || '', name); this.vault.write(path, ''); }
     this.cancelName();
     const n = this.addNote(path, { parent });
     this.sel = { type: 'node', id: n.id };
@@ -534,7 +539,7 @@ export class SchemaView {
       if (g.type === 'drag') {
         const n = this.node(g.id);
         if (g.moved) { n.pinned = true; this.save(); this.render(); }
-        else if (this.sel?.type === 'node' && this.sel.id === g.id && e.pointerType !== 'mouse') this.openNote(n.file);
+        else if (this.sel?.type === 'node' && this.sel.id === g.id && e.pointerType !== 'mouse' && n.file) this.openNote(n.file);
         else this.select({ type: 'node', id: g.id });
       }
       if (g.type === 'connect') {

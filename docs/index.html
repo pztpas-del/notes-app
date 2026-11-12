@@ -19,6 +19,8 @@
     <div class="side-head">
       <button class="icon" id="newNote" title="Новая заметка (Alt+N)" aria-label="Новая заметка">
         <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+      <button class="icon" id="newFolder" title="Новая папка" aria-label="Новая папка">
+        <svg viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 012-2h4l2 2h7a2 2 0 012 2v8a2 2 0 01-2 2h-13a2 2 0 01-2-2z"/><path d="M12 11v5M9.5 13.5h5"/></svg></button>
       <button class="icon" id="openGraph" title="Граф связей (Ctrl+G)" aria-label="Граф связей">
         <svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="8" r="2.5"/><circle cx="10" cy="18" r="2.5"/><path d="M8.2 7l7.5.8M7 8.3l2.2 7.4M16.5 10l-5 6"/></svg></button>
       <button class="icon" id="openSchema" title="Блок-схема" aria-label="Блок-схема">
@@ -112,6 +114,9 @@
           <button type="button" id="yaMove" hidden>Перенести файлы на Диск</button>
           <button type="button" id="yaDisconnect" class="danger-text" hidden>Отключить на этом устройстве</button>
         </div>
+        <h2>Папки и блок-схема</h2>
+        <label class="check-row"><input type="checkbox" id="folderSchemaLink"> Новые заметки, созданные в папке, ставить на блок-схеме под этой папкой</label>
+        <p class="muted">Папка появится на схеме блоком 📁, а новые заметки в ней — ниже неё. Для отдельной папки это можно включить или выключить: правой кнопкой по папке в списке заметок (на телефоне — долгое нажатие) → «Новые заметки — под папкой на блок-схеме». Такие папки отмечены значком ⤵. Настройка общая для всех устройств.</p>
         <h2>Где взять токен</h2>
         <ol class="steps">
           <li>Создайте на GitHub закрытое хранилище для заметок и при создании отметьте <b>Add a README file</b>.</li>

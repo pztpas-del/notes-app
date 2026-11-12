@@ -9,7 +9,7 @@ import { MediaStore } from './media.js';
 import { CalendarView } from './calendar.js';
 import { PushClient } from './push.js';
 import { NativeReminders, isNativeApp } from './native.js';
-import { openEditMenuAt } from './editmenu.js';
+import { openEditMenuAt, showMenu } from './editmenu.js';
 
 const $ = id => document.getElementById(id);
 const prefs = {
@@ -307,9 +307,11 @@ function showFile(path) {
 }
 
 
-function newNote(name = 'Без названия') {
-  const p = vault.uniquePath('', name);
+function newNote(name = 'Без названия', dir = '') {
+  const p = vault.uniquePath(dir, name);
   vault.write(p, '');
+  // A note made in a linked folder goes below that folder on the flowchart.
+  if (dir && vault.placeNewNote(p)) toast(`Заметка добавлена на блок-схему под папкой «${dir.split('/').pop()}»`);
   mode = 'edit'; prefs.set('mode', mode);
   navigate(noteHash(p));
   requestAnimationFrame(() => { $('title').focus(); $('title').select(); });
@@ -376,7 +378,7 @@ function renderTree() {
   const q = $('search').value.trim().toLowerCase();
   const notes = vault.notes();
   box.replaceChildren();
-  if (!notes.length) { box.append(el('p', { className: 'empty-hint', textContent: 'Заметок пока нет.' })); return; }
+  if (!notes.length && !vault.folderConf().folders.length) { box.append(el('p', { className: 'empty-hint', textContent: 'Заметок пока нет.' })); return; }
 
   if (q) {
     let hits;
@@ -398,29 +400,44 @@ function renderTree() {
   }
 
   const root = { folders: new Map(), notes: [] };
-  for (const n of [...notes, ...vault.attachments()]) {
-    const parts = n.path.split('/');
-    parts.pop();
+  const folderOf = parts => {
     let node = root;
     for (const part of parts) {
       if (!node.folders.has(part)) node.folders.set(part, { folders: new Map(), notes: [] });
       node = node.folders.get(part);
     }
-    node.notes.push(n);
-  }
+    return node;
+  };
+  for (const n of [...notes, ...vault.attachments()]) folderOf(n.path.split('/').slice(0, -1)).notes.push(n);
+  for (const f of vault.folderConf().folders) folderOf(f.split('/')); // empty folders made by hand
   const chevron = () => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 12 12'); s.classList.add('chev'); s.innerHTML = '<path d="M4 2.5l3.5 3.5L4 9.5" fill="none" stroke="currentColor" stroke-width="1.5"/>'; return s; };
   const draw = (node, prefix, parent) => {
     for (const [name, child] of [...node.folders].sort((a, b) => a[0].localeCompare(b[0], 'ru'))) {
       const path = prefix + name;
       const open = !collapsed.has(path);
-      const b = el('button', { type: 'button', className: 'folder' + (open ? ' open' : '') }, chevron(), el('span', { className: 'name', textContent: name }));
-      b.setAttribute('aria-expanded', String(open));
       const kids = el('div', { className: 'kids', hidden: !open });
+      if (path === renamingFolder) {
+        // Typing a name for a new or renamed folder, right in the list.
+        const input = el('input', { className: 'folder-rename', value: name, 'aria-label': 'Название папки' });
+        let done = false;
+        const finish = ok => { if (done) return; done = true; renamingFolder = null; if (ok) renameFolder(path, input.value); else renderTree(); };
+        input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); finish(true); } else if (e.key === 'Escape') finish(false); });
+        input.addEventListener('blur', () => finish(true));
+        parent.append(input, kids);
+        requestAnimationFrame(() => { input.focus(); input.select(); });
+        draw(child, path + '/', kids);
+        continue;
+      }
+      const linked = path !== ATTACH_DIR && vault.folderLinked(path);
+      const b = el('button', { type: 'button', className: 'folder' + (open ? ' open' : ''), title: linked ? 'Новые заметки этой папки встают под ней на блок-схеме' : '' },
+        chevron(), el('span', { className: 'name', textContent: name }), linked ? el('span', { className: 'folder-linked', textContent: '⤵', 'aria-label': 'привязана к блок-схеме' }) : '');
+      b.setAttribute('aria-expanded', String(open));
       b.addEventListener('click', () => {
         if (collapsed.has(path)) collapsed.delete(path); else collapsed.add(path);
         prefs.set('collapsed', [...collapsed]);
         renderTree();
       });
+      if (path !== ATTACH_DIR) b.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); folderMenu(path, e.clientX, e.clientY); });
       parent.append(b, kids);
       draw(child, path + '/', kids);
     }
@@ -435,6 +452,62 @@ function renderTree() {
     }
   };
   draw(root, '', box);
+}
+
+// ---------- Folders ----------
+let renamingFolder = null;
+function newFolder(parentDir = '') {
+  const taken = new Set(vault.folders().map(f => f.toLowerCase()));
+  let path;
+  for (let i = 1; ; i++) { path = (parentDir ? parentDir + '/' : '') + 'Новая папка' + (i > 1 ? ' ' + i : ''); if (!taken.has(path.toLowerCase())) break; }
+  vault.createFolder(path);
+  if (parentDir) { collapsed.delete(parentDir); prefs.set('collapsed', [...collapsed]); }
+  renamingFolder = path;
+  openDrawer();
+  renderTree();
+  scheduleSync();
+}
+function renameFolder(path, typed) {
+  const name = cleanTitle(String(typed).replace(/\//g, ' '));
+  const parentDir = dirname(path);
+  const next = name ? (parentDir ? parentDir + '/' : '') + name : path;
+  if (next === path) { renderTree(); return; }
+  try {
+    vault.renameFolder(path, next);
+    if (current && current.startsWith(path + '/')) { current = next + current.slice(path.length); location.replace(noteHash(current)); }
+    for (const c of [...collapsed]) if (c === path || c.startsWith(path + '/')) { collapsed.delete(c); collapsed.add(next + c.slice(path.length)); }
+    prefs.set('collapsed', [...collapsed]);
+    scheduleSync();
+  } catch (e) { toast(e.message, 6000); }
+  renderTree();
+}
+function folderMenu(path, x, y) {
+  const name = path.split('/').pop();
+  const count = vault.notesIn(path).length;
+  const linked = vault.folderLinked(path);
+  showMenu([
+    { label: 'Новая заметка', icon: '+', run: () => newNote('Без названия', path) },
+    { label: 'Новая папка', icon: '📁', run: () => newFolder(path) },
+    'sep',
+    { label: 'Переименовать', run: () => { renamingFolder = path; renderTree(); } },
+    { label: 'Удалить папку…', run: () => showMenu([
+      { label: count ? `Удалить «${name}» и заметок в ней: ${count}?` : `Удалить пустую папку «${name}»?`, disabled: true },
+      { label: 'Удалить', icon: '🗑', run: () => {
+        vault.deleteFolder(path);
+        if (current && current.startsWith(path + '/')) navigate('');
+        toast(count ? `Папка «${name}» удалена вместе с заметками. На GitHub они останутся в истории изменений.` : `Папка «${name}» удалена`, 7000);
+        scheduleSync(); renderTree();
+      } },
+      { label: 'Отмена', run: () => {} },
+    ], x, y) },
+    'sep',
+    { label: 'Новые заметки — под папкой на блок-схеме', on: linked, icon: ' ', run: () => {
+      vault.setFolderLinked(path, !linked);
+      toast(!linked ? `Новые заметки в «${name}» будут вставать под этой папкой на блок-схеме` : `Новые заметки в «${name}» больше не привязываются к папке на блок-схеме`, 6000);
+      scheduleSync(); renderTree();
+    } },
+    { label: 'Показать папку на блок-схеме', run: () => { vault.addFolderToSchema(path); scheduleSync(); navigate('#schema'); } },
+  ], x, y);
 }
 
 // The notes list stays on the left (as in Obsidian) unless the user hides it or the
@@ -722,6 +795,7 @@ function showSettings() {
   else { msg.textContent = sync.configured() ? 'Синхронизация включена.' : ''; msg.className = 'form-msg'; }
   renderYa();
   if (ya.connected()) ya.info().then(i => { yaState.info = i; renderYa(); }).catch(() => {});
+  $('folderSchemaLink').checked = vault.folderConf().schemaLink;
 }
 
 function readForm() {
@@ -799,6 +873,16 @@ vault.onChange(() => {
 function bind() {
   window.addEventListener('hashchange', route);
   $('newNote').addEventListener('click', () => newNote());
+  $('newFolder').addEventListener('click', () => newFolder());
+  // Right-click on empty space of the list: new note or folder at the top level.
+  $('tree').addEventListener('contextmenu', e => {
+    if (e.target.closest('button, input')) return;
+    e.preventDefault();
+    showMenu([
+      { label: 'Новая заметка', icon: '+', run: () => newNote() },
+      { label: 'Новая папка', icon: '📁', run: () => newFolder() },
+    ], e.clientX, e.clientY);
+  });
   $('openGraph').addEventListener('click', () => navigate('#graph'));
   $('openSchema').addEventListener('click', () => navigate('#schema'));
   $('openCalendar').addEventListener('click', () => navigate('#calendar'));
@@ -864,6 +948,14 @@ function bind() {
   $('yaConnect').addEventListener('click', () => ya.startLogin());
   $('yaDisconnect').addEventListener('click', () => { ya.disconnect(); yaState = { error: '', info: null, moving: false }; renderYa(); toast('Яндекс Диск отключён на этом устройстве. Файлы на Диске остались.'); });
   $('yaMove').addEventListener('click', () => moveLegacyToDisk());
+  $('folderSchemaLink').addEventListener('change', e => {
+    const c = vault.folderConf();
+    c.schemaLink = e.target.checked;
+    vault.saveFolderConf(c);
+    renderTree();
+    scheduleSync();
+    toast(c.schemaLink ? 'Новые заметки в папках будут вставать на блок-схеме под своей папкой' : 'Новые заметки больше не привязываются к папкам на блок-схеме', 6000);
+  });
   $('disconnect').addEventListener('click', () => {
     settings = {}; prefs.set('sync', {});
     syncState = { state: 'idle', at: null, error: '' };

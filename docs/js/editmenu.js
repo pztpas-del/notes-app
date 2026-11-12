@@ -270,6 +270,13 @@ function buildMenu(items, x, y, level = 0) {
   return menu;
 }
 
+// Any other menu in the same style (e.g. the folder menu in the notes list).
+// items: [{ label, icon, key, on, disabled, run, sub }] or 'sep'.
+export function showMenu(items, x, y) {
+  closeAll();
+  buildMenu(items, x, y);
+}
+
 // The same menu from a button (the "Аа" button in the note's top bar, handy on a phone).
 export function openEditMenuAt(view, x, y) {
   closeAll();

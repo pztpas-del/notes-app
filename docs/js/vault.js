@@ -21,13 +21,19 @@ export const isSynced = p => /\.(md|canvas|json|png|jpe?g|gif|webp|svg|bmp|avif|
 // The flowchart lives in one JSON Canvas file (jsoncanvas.org), readable by other apps.
 export const SCHEMA_PATH = 'Схема.canvas';
 
-// Parses the flowchart file into nodes (one per note) and parent→child edges.
+// Folders: the list of folders (also empty ones) and how they sit on the flowchart.
+// { folders: [paths], schemaLink: bool (new notes go under their folder on the
+//   flowchart), overrides: { folderPath: bool } (per-folder on/off) }
+export const FOLDERS_PATH = 'Настройки папок.json';
+
+// Parses the flowchart file into nodes (one per note or folder) and parent→child edges.
+// A folder is a text node with an extra "folder" field, so other canvas apps show it as text.
 export function parseSchema(text) {
   try {
     const j = JSON.parse(text || '{}');
     const nodes = (Array.isArray(j.nodes) ? j.nodes : [])
-      .filter(n => n && n.type === 'file' && typeof n.file === 'string' && n.id)
-      .map(n => ({ id: String(n.id), file: n.file, x: Number(n.x) || 0, y: Number(n.y) || 0, pinned: Boolean(n.pinned) }));
+      .filter(n => n && n.id && ((n.type === 'file' && typeof n.file === 'string') || (n.type === 'text' && typeof n.folder === 'string')))
+      .map(n => ({ id: String(n.id), ...(n.type === 'file' ? { file: n.file } : { folder: n.folder }), x: Number(n.x) || 0, y: Number(n.y) || 0, pinned: Boolean(n.pinned) }));
     const ids = new Set(nodes.map(n => n.id));
     const edges = (Array.isArray(j.edges) ? j.edges : [])
       .filter(e => e && ids.has(e.fromNode) && ids.has(e.toNode) && e.fromNode !== e.toNode)
@@ -39,7 +45,8 @@ export function parseSchema(text) {
 }
 export function serializeSchema(s) {
   return JSON.stringify({
-    nodes: s.nodes.map(n => ({ id: n.id, type: 'file', file: n.file, x: Math.round(n.x), y: Math.round(n.y), width: 200, height: 64, ...(n.pinned ? { pinned: true } : {}) })),
+    nodes: s.nodes.map(n => ({ id: n.id, ...(n.folder !== undefined ? { type: 'text', text: '📁 ' + n.folder.split('/').pop(), folder: n.folder } : { type: 'file', file: n.file }),
+      x: Math.round(n.x), y: Math.round(n.y), width: 200, height: 64, ...(n.pinned ? { pinned: true } : {}) })),
     edges: s.edges.map(e => ({ id: e.id, fromNode: e.fromNode, fromSide: 'bottom', toNode: e.toNode, toSide: 'top', toEnd: 'arrow' })),
   }, null, '\t') + '\n';
 }
@@ -127,6 +134,107 @@ export class Vault {
     }
     this.saveSchema(s);
   }
+  // ---------- Folders ----------
+  folderConf() {
+    let c = {};
+    try { c = JSON.parse(this.get(FOLDERS_PATH)?.content || '{}') || {}; } catch { c = {}; }
+    return { folders: Array.isArray(c.folders) ? c.folders : [], schemaLink: Boolean(c.schemaLink), overrides: c.overrides && typeof c.overrides === 'object' ? c.overrides : {} };
+  }
+  saveFolderConf(c) {
+    c.folders = [...new Set(c.folders)].sort((a, b) => a.localeCompare(b, 'ru'));
+    this.write(FOLDERS_PATH, JSON.stringify(c, null, 2) + '\n');
+  }
+  // Every folder: the ones that hold notes or files, their parents, and empty ones made by hand.
+  folders() {
+    const out = new Set();
+    const add = p => { for (let d = dirname(p); d; d = dirname(d)) out.add(d); };
+    for (const n of this.notes()) add(n.path);
+    for (const a of this.attachments()) add(a.path);
+    for (const f of this.folderConf().folders) { out.add(f); add(f); }
+    out.delete(ATTACH_DIR);
+    return [...out].sort((a, b) => a.localeCompare(b, 'ru'));
+  }
+  // Is "new notes go under this folder on the flowchart" on for this folder?
+  folderLinked(dir) {
+    const c = this.folderConf();
+    return dir in c.overrides ? Boolean(c.overrides[dir]) : c.schemaLink;
+  }
+  setFolderLinked(dir, on) {
+    const c = this.folderConf();
+    if (on === c.schemaLink) delete c.overrides[dir]; else c.overrides[dir] = on;
+    this.saveFolderConf(c);
+  }
+  createFolder(dir) {
+    const c = this.folderConf();
+    c.folders.push(dir);
+    this.saveFolderConf(c);
+  }
+  notesIn(dir) { return this.notes().filter(n => n.path.startsWith(dir + '/')); }
+  // Renames a folder: moves its notes (links are rewritten), keeps settings and the flowchart.
+  renameFolder(from, to) {
+    if (from === to) return;
+    if (this.folders().some(f => f.toLowerCase() === to.toLowerCase())) throw new Error('Папка с таким названием уже есть.');
+    for (const n of this.notesIn(from)) this.rename(n.path, to + n.path.slice(from.length));
+    const move = p => (p === from || p.startsWith(from + '/') ? to + p.slice(from.length) : p);
+    const c = this.folderConf();
+    c.folders = c.folders.map(move);
+    c.overrides = Object.fromEntries(Object.entries(c.overrides).map(([k, v]) => [move(k), v]));
+    this.saveFolderConf(c);
+    const s = this.schema();
+    if (s.nodes.some(n => n.folder !== undefined && move(n.folder) !== n.folder)) {
+      s.nodes.forEach(n => { if (n.folder !== undefined) n.folder = move(n.folder); });
+      this.saveSchema(s);
+    }
+  }
+  // Deletes a folder with the notes in it (they stay in the GitHub history).
+  deleteFolder(dir) {
+    for (const n of this.notesIn(dir)) this.remove(n.path);
+    const inside = p => p === dir || p.startsWith(dir + '/');
+    const c = this.folderConf();
+    c.folders = c.folders.filter(f => !inside(f));
+    for (const k of Object.keys(c.overrides)) if (inside(k)) delete c.overrides[k];
+    this.saveFolderConf(c);
+    const s = this.schema();
+    const gone = new Set(s.nodes.filter(n => n.folder !== undefined && inside(n.folder)).map(n => n.id));
+    if (gone.size) {
+      s.nodes = s.nodes.filter(n => !gone.has(n.id));
+      s.edges = s.edges.filter(e => !gone.has(e.fromNode) && !gone.has(e.toNode));
+      this.saveSchema(s);
+    }
+  }
+  // A folder's block on the flowchart; made if missing, and put under its parent folder
+  // when that one is linked too.
+  folderNode(s, dir) {
+    let n = s.nodes.find(x => x.folder === dir);
+    if (!n) { n = { id: 'f' + Math.random().toString(36).slice(2, 10), folder: dir, x: 0, y: 0, pinned: false }; s.nodes.push(n); }
+    const parent = dirname(dir);
+    if (parent && this.folderLinked(parent)) {
+      const p = this.folderNode(s, parent);
+      if (!s.edges.some(e => e.toNode === n.id)) s.edges.push({ id: 'e' + Math.random().toString(36).slice(2, 10), fromNode: p.id, toNode: n.id });
+    }
+    return n;
+  }
+  // Shows a folder on the flowchart (from its menu).
+  addFolderToSchema(dir) {
+    const s = this.schema();
+    const copy = { nodes: s.nodes.map(n => ({ ...n })), edges: s.edges.map(e => ({ ...e })) };
+    this.folderNode(copy, dir);
+    this.saveSchema(copy);
+  }
+  // A new note in a linked folder appears on the flowchart below its folder.
+  placeNewNote(path) {
+    const dir = dirname(path);
+    if (!dir || !this.folderLinked(dir)) return false;
+    const s = this.schema();
+    const copy = { nodes: s.nodes.map(n => ({ ...n })), edges: s.edges.map(e => ({ ...e })) };
+    const f = this.folderNode(copy, dir);
+    let n = copy.nodes.find(x => x.file === path);
+    if (!n) { n = { id: 'n' + Math.random().toString(36).slice(2, 10), file: path, x: 0, y: 0, pinned: false }; copy.nodes.push(n); }
+    if (!copy.edges.some(e => e.fromNode === f.id && e.toNode === n.id)) copy.edges.push({ id: 'e' + Math.random().toString(36).slice(2, 10), fromNode: f.id, toNode: n.id });
+    this.saveSchema(copy);
+    return true;
+  }
+
   uniquePath(dir, name, ext = '.md') {
     const taken = new Set([...this.files.values()].filter(f => !f.deleted).map(f => f.path.toLowerCase()));
     if (this.media) for (const p of this.media.paths()) taken.add(p.toLowerCase());
