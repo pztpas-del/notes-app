@@ -252,6 +252,15 @@ code { font-family: var(--mono); font-size: .9em; background: var(--code-bg); pa
 .sblock.folder { background: color-mix(in srgb, var(--accent) 10%, var(--bg)); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
 .sblock.folder .sblock-sub { color: var(--accent); }
 /* Folders in the notes list */
+/* Drag and drop in the notes list */
+.tree [data-kind] { position: relative; }
+.tree .dragging { opacity: .4; }
+.tree .drop-into { background: color-mix(in srgb, var(--accent) 18%, transparent) !important; box-shadow: inset 0 0 0 1.5px var(--accent); }
+.tree .drop-before::before, .tree .drop-after::after { content: ""; position: absolute; left: 6px; right: 6px; height: 2px; border-radius: 2px; background: var(--accent); }
+.tree .drop-before::before { top: -1px; }
+.tree .drop-after::after { bottom: -1px; }
+.tree.drop-root { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 50%, transparent); border-radius: 10px; }
+.ctx-menu { max-height: calc(100vh - 16px); overflow-y: auto; }
 .tree .folder-linked { margin-left: auto; font-size: 12px; color: var(--accent); opacity: .8; }
 .tree .folder-rename { width: 100%; box-sizing: border-box; font: inherit; font-weight: 550; padding: 5px 8px; border: 1px solid var(--accent); border-radius: 8px; background: var(--bg); color: var(--text); outline: none; min-height: 32px; }
 .check-row { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; margin: 4px 0; }

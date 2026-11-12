@@ -414,7 +414,9 @@ function renderTree() {
   for (const f of vault.folderConf().folders) folderOf(f.split('/')); // empty folders made by hand
   const chevron = () => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 12 12'); s.classList.add('chev'); s.innerHTML = '<path d="M4 2.5l3.5 3.5L4 9.5" fill="none" stroke="currentColor" stroke-width="1.5"/>'; return s; };
   const draw = (node, prefix, parent) => {
-    for (const [name, child] of [...node.folders].sort((a, b) => a[0].localeCompare(b[0], 'ru'))) {
+    const dir = prefix.replace(/\/$/, '');
+    const folderNames = vault.sortNames(dir, [...node.folders.keys()]);
+    for (const [name, child] of folderNames.map(n => [n, node.folders.get(n)])) {
       const path = prefix + name;
       const open = !collapsed.has(path);
       const kids = el('div', { className: 'kids', hidden: !open });
@@ -439,17 +441,28 @@ function renderTree() {
         prefs.set('collapsed', [...collapsed]);
         renderTree();
       });
-      if (path !== ATTACH_DIR) b.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); folderMenu(path, e.clientX, e.clientY); });
+      if (path !== ATTACH_DIR) {
+        b.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); folderMenu(path, e.clientX, e.clientY); });
+        Object.assign(b.dataset, { kind: 'folder', path });
+        b.draggable = true;
+      }
       parent.append(b, kids);
       draw(child, path + '/', kids);
     }
-    const sorted = node.notes.sort((a, b) => (isNote(b.path) - isNote(a.path)) || basename(a.path).localeCompare(basename(b.path), 'ru'));
-    for (const n of sorted) {
+    // Notes in the hand-made order, then pictures and files alphabetically.
+    const byName = new Map(node.notes.filter(n => isNote(n.path)).map(n => [filename(n.path), n]));
+    const files = node.notes.filter(n => !isNote(n.path)).sort((a, b) => filename(a.path).localeCompare(filename(b.path), 'ru'));
+    for (const n of [...vault.sortNames(dir, [...byName.keys()]).map(k => byName.get(k)), ...files]) {
       const note = isNote(n.path);
       const b = el('button', { type: 'button', className: (n.path === current || n.path === currentFile ? 'active' : '') + (note ? '' : ' attachment') },
         el('span', { className: 'name', textContent: note ? basename(n.path) : filename(n.path) }));
       if (n.dirty && sync.configured()) b.append(el('span', { className: 'dot', title: 'Ещё не отправлено на GitHub' }));
       b.addEventListener('click', () => navigate(note ? noteHash(n.path) : fileHash(n.path)));
+      if (note) {
+        b.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); noteMenu(n.path, e.clientX, e.clientY); });
+        Object.assign(b.dataset, { kind: 'note', path: n.path });
+        b.draggable = true;
+      }
       parent.append(b);
     }
   };
@@ -474,14 +487,90 @@ function renameFolder(path, typed) {
   const parentDir = dirname(path);
   const next = name ? (parentDir ? parentDir + '/' : '') + name : path;
   if (next === path) { renderTree(); return; }
-  try {
-    vault.renameFolder(path, next);
-    if (current && current.startsWith(path + '/')) { current = next + current.slice(path.length); location.replace(noteHash(current)); }
-    for (const c of [...collapsed]) if (c === path || c.startsWith(path + '/')) { collapsed.delete(c); collapsed.add(next + c.slice(path.length)); }
-    prefs.set('collapsed', [...collapsed]);
-    scheduleSync();
-  } catch (e) { toast(e.message, 6000); }
+  try { moveFolder(path, next); scheduleSync(); } catch (e) { toast(e.message, 6000); }
   renderTree();
+}
+// Moves or renames a folder with everything in it; the open note and folded folders follow.
+function moveFolder(from, to) {
+  vault.renameFolder(from, to);
+  if (current && current.startsWith(from + '/')) { current = to + current.slice(from.length); location.replace(noteHash(current)); }
+  for (const c of [...collapsed]) if (c === from || c.startsWith(from + '/')) { collapsed.delete(c); collapsed.add(to + c.slice(from.length)); }
+  prefs.set('collapsed', [...collapsed]);
+}
+
+// ---------- Moving notes and folders (drag and drop, or the menu) ----------
+// Names in a folder, as shown: kind 'folder' or 'note'.
+function groupNames(dir, kind) {
+  if (kind === 'note') return vault.sortNames(dir, vault.notes().filter(n => dirname(n.path) === dir).map(n => filename(n.path)));
+  return vault.sortNames(dir, vault.folders().filter(f => dirname(f) === dir).map(f => f.split('/').pop()));
+}
+// Moves a note or folder into newDir ('' = top level). ref = { name, after }: put it next to that item.
+function moveItem(kind, path, newDir, ref = null) {
+  const name = path.split('/').pop();
+  const oldDir = dirname(path);
+  const target = (newDir ? newDir + '/' : '') + name;
+  if (kind === 'folder' && (newDir === path || newDir.startsWith(path + '/'))) { toast('Папку нельзя положить в саму себя.'); return; }
+  try {
+    if (target !== path) {
+      if (kind === 'note') {
+        const p = vault.rename(path, target);
+        if (current === path) { current = p; location.replace(noteHash(p)); }
+      } else moveFolder(path, target);
+    }
+  } catch (e) { toast(e.message, 6000); renderTree(); return; }
+  // Its place among the others in that folder.
+  const list = groupNames(newDir, kind).filter(n => n !== name);
+  let at = list.length;
+  if (ref) { const i = list.indexOf(ref.name); if (i >= 0) at = i + (ref.after ? 1 : 0); }
+  list.splice(at, 0, name);
+  vault.setOrder(newDir, kind === 'note' ? [...groupNames(newDir, 'folder'), ...list] : [...list, ...groupNames(newDir, 'note')]);
+  if (newDir && collapsed.has(newDir)) { collapsed.delete(newDir); prefs.set('collapsed', [...collapsed]); }
+  if (newDir !== oldDir) toast(`«${kind === 'note' ? basename(path) : name}» перемещена ${newDir ? `в «${newDir.split('/').pop()}»` : 'из папки на верхний уровень'}`);
+  renderTree();
+  scheduleSync();
+}
+// One place up (-1) or down (+1) among the notes or folders of the same folder.
+function moveStep(kind, path, delta) {
+  const dir = dirname(path), name = path.split('/').pop();
+  const list = groupNames(dir, kind);
+  const i = list.indexOf(name), j = i + delta;
+  if (i < 0 || j < 0 || j >= list.length) return;
+  [list[i], list[j]] = [list[j], list[i]];
+  vault.setOrder(dir, kind === 'note' ? [...groupNames(dir, 'folder'), ...list] : [...list, ...groupNames(dir, 'note')]);
+  renderTree();
+  scheduleSync();
+}
+// "Переместить в ▸": the top level and every folder (a folder cannot go into itself).
+function moveTargets(kind, path) {
+  const here = dirname(path);
+  const folders = vault.folders().filter(f => f !== here && !(kind === 'folder' && (f === path || f.startsWith(path + '/'))));
+  return [
+    here ? { label: 'Без папки (верхний уровень)', icon: '⤒', run: () => moveItem(kind, path, '') } : null,
+    ...folders.map(f => ({ label: f.split('/').join(' / '), icon: '📁', run: () => moveItem(kind, path, f) })),
+  ].filter(Boolean);
+}
+function confirmDelete(text, onYes, x, y) {
+  showMenu([
+    { label: text, disabled: true },
+    { label: 'Удалить', icon: '🗑', run: onYes },
+    { label: 'Отмена', run: () => {} },
+  ], x, y);
+}
+function noteMenu(path, x, y) {
+  const name = basename(path);
+  const targets = moveTargets('note', path);
+  showMenu([
+    { label: 'Открыть', run: () => navigate(noteHash(path)) },
+    { label: 'Переименовать', run: () => { navigate(noteHash(path)); requestAnimationFrame(() => { $('title').focus(); $('title').select(); }); } },
+    { label: 'Переместить в', icon: '↪', disabled: !targets.length, sub: targets },
+    { label: 'Выше', icon: '↑', run: () => moveStep('note', path, -1) },
+    { label: 'Ниже', icon: '↓', run: () => moveStep('note', path, 1) },
+    'sep',
+    { label: 'Показать на графе', run: () => { navigate(noteHash(path)); navigate('#graph'); } },
+    { label: 'Показать на блок-схеме', run: () => navigate('#schema=' + encodeURIComponent(path)) },
+    'sep',
+    { label: 'Удалить…', icon: '🗑', run: () => confirmDelete(`Удалить «${name}»?`, () => deleteNote(path), x, y) },
+  ], x, y);
 }
 function folderMenu(path, x, y) {
   const name = path.split('/').pop();
@@ -492,16 +581,15 @@ function folderMenu(path, x, y) {
     { label: 'Новая папка', icon: '📁', run: () => newFolder(path) },
     'sep',
     { label: 'Переименовать', run: () => { renamingFolder = path; renderTree(); } },
-    { label: 'Удалить папку…', run: () => showMenu([
-      { label: count ? `Удалить «${name}» и заметок в ней: ${count}?` : `Удалить пустую папку «${name}»?`, disabled: true },
-      { label: 'Удалить', icon: '🗑', run: () => {
-        vault.deleteFolder(path);
-        if (current && current.startsWith(path + '/')) navigate('');
-        toast(count ? `Папка «${name}» удалена вместе с заметками. На GitHub они останутся в истории изменений.` : `Папка «${name}» удалена`, 7000);
-        scheduleSync(); renderTree();
-      } },
-      { label: 'Отмена', run: () => {} },
-    ], x, y) },
+    { label: 'Переместить в', icon: '↪', disabled: !moveTargets('folder', path).length, sub: moveTargets('folder', path) },
+    { label: 'Выше', icon: '↑', run: () => moveStep('folder', path, -1) },
+    { label: 'Ниже', icon: '↓', run: () => moveStep('folder', path, 1) },
+    { label: 'Удалить папку…', icon: '🗑', run: () => confirmDelete(count ? `Удалить «${name}» и заметок в ней: ${count}?` : `Удалить пустую папку «${name}»?`, () => {
+      vault.deleteFolder(path);
+      if (current && current.startsWith(path + '/')) navigate('');
+      toast(count ? `Папка «${name}» удалена вместе с заметками. На GitHub они останутся в истории изменений.` : `Папка «${name}» удалена`, 7000);
+      scheduleSync(); renderTree();
+    }, x, y) },
     'sep',
     { label: 'Новые заметки — под папкой на блок-схеме', on: linked, icon: ' ', run: () => {
       vault.setFolderLinked(path, !linked);
@@ -542,9 +630,20 @@ function closeDrawer() { $('app').classList.remove('drawer'); $('backdrop').hidd
 
 // ---------- Note menu ----------
 function closeMenu() { $('moreMenu').hidden = true; $('moreBtn').setAttribute('aria-expanded', 'false'); }
+function deleteNote(p) {
+  if (!p || !vault.get(p)) return;
+  const name = basename(p);
+  vault.remove(p);
+  if (p === current) { prefs.set('last', null); navigate(''); }
+  toast(`Заметка «${name}» удалена. На GitHub она останется в истории изменений.`);
+  renderTree();
+  scheduleSync();
+}
 function openMenu() {
   const menu = $('moreMenu');
-  const item = (text, fn, cls = '') => { const b = el('button', { type: 'button', textContent: text, className: cls }); b.addEventListener('click', fn); return b; };
+  // stopPropagation: a click that swaps the menu's content must not reach the
+  // "click outside closes the menu" handler (that is what hid the delete confirmation).
+  const item = (text, fn, cls = '') => { const b = el('button', { type: 'button', textContent: text, className: cls }); b.addEventListener('click', e => { e.stopPropagation(); fn(); }); return b; };
   const name = basename(current);
   menu.replaceChildren(
     item('Новая заметка', () => { closeMenu(); newNote(); }),
@@ -553,15 +652,7 @@ function openMenu() {
     item('Удалить заметку', () => {
       menu.replaceChildren(
         el('p', { textContent: `Удалить «${name}»? После синхронизации она удалится и на других устройствах. На GitHub останется в истории изменений.` }),
-        item('Удалить', () => {
-          const p = current;
-          closeMenu();
-          vault.remove(p);
-          prefs.set('last', null);
-          navigate('');
-          toast(`Заметка «${name}» удалена`);
-          scheduleSync();
-        }, 'danger'),
+        item('Удалить', () => { closeMenu(); deleteNote(current); }, 'danger'),
         item('Отмена', closeMenu));
     }, 'danger'));
   menu.hidden = false;
@@ -972,6 +1063,51 @@ function bind() {
   window.addEventListener('hashchange', route);
   $('newNote').addEventListener('click', () => newNote());
   $('newFolder').addEventListener('click', () => newFolder());
+  // Drag and drop in the notes list: onto a folder = into it; above/below an item = to that
+  // place (and into its folder); onto empty space = to the top level.
+  {
+    const tree = $('tree');
+    let drag = null;
+    const clear = () => { tree.classList.remove('drop-root'); tree.querySelectorAll('.drop-into, .drop-before, .drop-after, .dragging').forEach(x => x.classList.remove('drop-into', 'drop-before', 'drop-after', 'dragging')); };
+    const zone = e => {
+      const row = e.target.closest('[data-kind]');
+      if (!row) return { root: true };
+      const r = row.getBoundingClientRect(), y = (e.clientY - r.top) / r.height;
+      if (row.dataset.kind === 'folder' && y > 0.25 && y < 0.75) return { row, into: true };
+      return { row, after: y >= 0.5 };
+    };
+    tree.addEventListener('dragstart', e => {
+      const row = e.target.closest('[data-kind]');
+      if (!row) return;
+      drag = { kind: row.dataset.kind, path: row.dataset.path };
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', row.dataset.path);
+      requestAnimationFrame(() => row.classList.add('dragging'));
+    });
+    tree.addEventListener('dragover', e => {
+      if (!drag) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      tree.classList.remove('drop-root');
+      tree.querySelectorAll('.drop-into, .drop-before, .drop-after').forEach(x => x.classList.remove('drop-into', 'drop-before', 'drop-after'));
+      const z = zone(e);
+      if (z.root) tree.classList.add('drop-root');
+      else if (z.row.dataset.path !== drag.path) z.row.classList.add(z.into ? 'drop-into' : z.after ? 'drop-after' : 'drop-before');
+    });
+    tree.addEventListener('drop', e => {
+      if (!drag) return;
+      e.preventDefault();
+      const d = drag, z = zone(e);
+      drag = null;
+      clear();
+      if (z.root) { moveItem(d.kind, d.path, ''); return; }
+      const t = z.row.dataset;
+      if (t.path === d.path) return;
+      if (z.into) moveItem(d.kind, d.path, t.path);
+      else moveItem(d.kind, d.path, dirname(t.path), t.kind === d.kind ? { name: t.path.split('/').pop(), after: z.after } : null);
+    });
+    tree.addEventListener('dragend', () => { drag = null; clear(); });
+  }
   $('aiFind').addEventListener('click', () => { $('openGraph').classList.remove('ai-hint'); openAiPanel(); });
   $('aiMode').addEventListener('change', e => {
     prefs.set('aiMode', e.target.value);

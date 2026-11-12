@@ -138,7 +138,27 @@ export class Vault {
   folderConf() {
     let c = {};
     try { c = JSON.parse(this.get(FOLDERS_PATH)?.content || '{}') || {}; } catch { c = {}; }
-    return { folders: Array.isArray(c.folders) ? c.folders : [], schemaLink: Boolean(c.schemaLink), overrides: c.overrides && typeof c.overrides === 'object' ? c.overrides : {} };
+    return { folders: Array.isArray(c.folders) ? c.folders : [], schemaLink: Boolean(c.schemaLink), overrides: c.overrides && typeof c.overrides === 'object' ? c.overrides : {},
+      order: c.order && typeof c.order === 'object' ? c.order : {} };
+  }
+  // Hand-made order of the notes list: order[folder] = [names of subfolders and note files].
+  // Names not in the list come after, alphabetically.
+  sortNames(dir, names) {
+    const list = this.folderConf().order[dir] || [];
+    const pos = new Map(list.map((n, i) => [n, i]));
+    return [...names].sort((a, b) => (pos.has(a) ? pos.get(a) : 1e9) - (pos.has(b) ? pos.get(b) : 1e9) || a.localeCompare(b, 'ru'));
+  }
+  setOrder(dir, names) {
+    const c = this.folderConf();
+    c.order[dir] = names;
+    this.saveFolderConf(c);
+  }
+  renameInOrder(dir, from, to) {
+    const c = this.folderConf();
+    const list = c.order[dir];
+    if (!list || !list.includes(from)) return;
+    c.order[dir] = list.map(n => (n === from ? to : n));
+    this.saveFolderConf(c);
   }
   saveFolderConf(c) {
     c.folders = [...new Set(c.folders)].sort((a, b) => a.localeCompare(b, 'ru'));
@@ -179,6 +199,8 @@ export class Vault {
     const c = this.folderConf();
     c.folders = c.folders.map(move);
     c.overrides = Object.fromEntries(Object.entries(c.overrides).map(([k, v]) => [move(k), v]));
+    c.order = Object.fromEntries(Object.entries(c.order).map(([k, v]) => [move(k), v]));
+    if (dirname(from) === dirname(to) && c.order[dirname(from)]) c.order[dirname(from)] = c.order[dirname(from)].map(n => (n === from.split('/').pop() ? to.split('/').pop() : n));
     this.saveFolderConf(c);
     const s = this.schema();
     if (s.nodes.some(n => n.folder !== undefined && move(n.folder) !== n.folder)) {
@@ -193,6 +215,7 @@ export class Vault {
     const c = this.folderConf();
     c.folders = c.folders.filter(f => !inside(f));
     for (const k of Object.keys(c.overrides)) if (inside(k)) delete c.overrides[k];
+    for (const k of Object.keys(c.order)) if (inside(k)) delete c.order[k];
     this.saveFolderConf(c);
     const s = this.schema();
     const gone = new Set(s.nodes.filter(n => n.folder !== undefined && inside(n.folder)).map(n => n.id));
@@ -384,6 +407,8 @@ export class Vault {
     this.write(newPath, content);
     for (const [p, c] of rewrites) this.write(p, c);
     this.updateSchemaNote(oldPath, newPath);
+    // Renamed in the same folder: it keeps its place in the hand-made order.
+    if (dirname(oldPath) === dirname(newPath)) this.renameInOrder(dirname(oldPath), filename(oldPath), filename(newPath));
     return newPath;
   }
 
