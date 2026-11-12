@@ -221,6 +221,54 @@ export class Vault {
     this.folderNode(copy, dir);
     this.saveSchema(copy);
   }
+  // Puts every note already in the folder (and its subfolders) below its own folder
+  // on the flowchart. Only the flowchart changes: the notes stay where they are.
+  attachFolderNotes(dir) {
+    const s = this.schema();
+    const copy = { nodes: s.nodes.map(n => ({ ...n })), edges: s.edges.map(e => ({ ...e })) };
+    const newId = p => p + Math.random().toString(36).slice(2, 10);
+    // Is there a path a → … → b already? (an edge b → a would close a circle)
+    const reaches = (a, b) => {
+      const seen = new Set([a]), stack = [a];
+      while (stack.length) { const x = stack.pop(); if (x === b) return true; for (const e of copy.edges) if (e.fromNode === x && !seen.has(e.toNode)) { seen.add(e.toNode); stack.push(e.toNode); } }
+      return false;
+    };
+    const ensureFolder = d => {
+      let n = copy.nodes.find(x => x.folder === d);
+      if (!n) { n = { id: newId('f'), folder: d, x: 0, y: 0, pinned: false }; copy.nodes.push(n); }
+      if (d !== dir) { // a subfolder hangs under its parent folder
+        const p = ensureFolder(dirname(d));
+        if (!copy.edges.some(e => e.fromNode === p.id && e.toNode === n.id) && !reaches(n.id, p.id)) copy.edges.push({ id: newId('e'), fromNode: p.id, toNode: n.id });
+      }
+      return n;
+    };
+    let added = 0;
+    for (const note of this.notesIn(dir)) {
+      const f = ensureFolder(dirname(note.path));
+      let n = copy.nodes.find(x => x.file === note.path);
+      if (!n) { n = { id: newId('n'), file: note.path, x: 0, y: 0, pinned: false }; copy.nodes.push(n); }
+      if (copy.edges.some(e => e.fromNode === f.id && e.toNode === n.id) || reaches(n.id, f.id)) continue;
+      copy.edges.push({ id: newId('e'), fromNode: f.id, toNode: n.id });
+      added++;
+    }
+    if (!copy.nodes.some(x => x.folder === dir)) ensureFolder(dir);
+    this.saveSchema(copy);
+    return added;
+  }
+  // Removes the flowchart links from the folder (and its subfolders) to the notes in it.
+  // The notes stay in the folder and stay on the flowchart, just not under the folder.
+  detachFolderNotes(dir) {
+    const s = this.schema();
+    const inside = p => p === dir || p.startsWith(dir + '/');
+    const folderIds = new Set(s.nodes.filter(n => n.folder !== undefined && inside(n.folder)).map(n => n.id));
+    const noteIds = new Set(s.nodes.filter(n => n.file && n.file.startsWith(dir + '/')).map(n => n.id));
+    const before = s.edges.length;
+    const edges = s.edges.filter(e => !(folderIds.has(e.fromNode) && noteIds.has(e.toNode)));
+    if (edges.length === before) return 0;
+    this.saveSchema({ nodes: s.nodes.map(n => ({ ...n })), edges });
+    return before - edges.length;
+  }
+
   // A new note in a linked folder appears on the flowchart below its folder.
   placeNewNote(path) {
     const dir = dirname(path);

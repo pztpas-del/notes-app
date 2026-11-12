@@ -507,6 +507,17 @@ function folderMenu(path, x, y) {
       scheduleSync(); renderTree();
     } },
     { label: 'Показать папку на блок-схеме', run: () => { vault.addFolderToSchema(path); scheduleSync(); navigate('#schema'); } },
+    // Only the flowchart changes: the notes stay in the folder.
+    { label: `Привязать заметки папки на схеме (${count})`, icon: '⤵', disabled: !count, run: () => {
+      const n = vault.attachFolderNotes(path);
+      toast(n ? `На блок-схеме под папкой «${name}» теперь заметок: ${n}. В самой папке ничего не изменилось.` : `Все заметки «${name}» уже стоят под папкой на блок-схеме`, 7000);
+      scheduleSync();
+    } },
+    { label: 'Отвязать заметки папки на схеме', icon: '⤴', disabled: !count, run: () => {
+      const n = vault.detachFolderNotes(path);
+      toast(n ? `Заметки «${name}» отвязаны от папки на блок-схеме (связей убрано: ${n}). Сами заметки остались в папке и на схеме.` : `На блок-схеме заметки «${name}» и так не привязаны к папке`, 7000);
+      scheduleSync();
+    } },
   ], x, y);
 }
 
