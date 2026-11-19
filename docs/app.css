@@ -146,6 +146,19 @@ code { font-family: var(--mono); font-size: .9em; background: var(--code-bg); pa
 
 #app { display: grid; grid-template-columns: var(--side-w, 230px) minmax(0, 1fr); height: 100%; padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
 #sidebar { position: relative; background: var(--side); border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+/* The notes list is buttons, not text: a tap or long press there must not start
+   selecting words (on phones it used to select «Синхронизировано» at the bottom). */
+#sidebar, .topbar, .goals-head, .cal-toolbar, .ctx-menu { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+#sidebar input, .topbar input { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
+/* "⋯" on rows of the notes list (phones): the right-click menu */
+.tree .row-more { margin-left: auto; padding: 0 10px; font-size: 18px; line-height: 1; color: var(--text-muted); border-radius: 8px; align-self: stretch; display: grid; place-items: center; }
+.tree .row-more:active { background: var(--surface); }
+.tree .folder-linked + .row-more { margin-left: 4px; }
+/* small "type a name" window */
+.ask-overlay { position: fixed; inset: 0; z-index: 120; background: rgb(0 0 0 / .4); display: grid; place-items: center; padding: 16px; animation: fade .18s var(--ease); }
+.ask-box { width: min(380px, 100%); background: var(--bg); color: var(--text); border-radius: 16px; padding: 16px; display: grid; gap: 12px; box-shadow: 0 20px 60px rgb(0 0 0 / .35); }
+.ask-input { font: inherit; font-size: 16px; padding: 9px 12px; border: 1.5px solid var(--accent); border-radius: 10px; background: var(--bg); color: var(--text); outline: none; -webkit-user-select: text; user-select: text; }
+.ask-row { display: flex; justify-content: flex-end; gap: 8px; }
 .side-resize { position: absolute; top: 0; right: -4px; bottom: 0; width: 8px; cursor: col-resize; z-index: 2; touch-action: none; }
 .side-resize:hover, .side-resize.active { background: linear-gradient(to right, transparent 3px, var(--accent) 3px, var(--accent) 5px, transparent 5px); }
 #menuBtn { display: none; }
@@ -647,7 +660,8 @@ button:active:not(:disabled) { transform: scale(.97); }
 .day-note-text:focus { outline: none; border-color: var(--accent); }
 .ce .day-note-text { min-height: 160px; resize: vertical; }
 .cal-daynotes { display: grid; border-bottom: 1px solid var(--border); }
-.daynote-cell { border: 0; border-left: 1px solid var(--border); border-radius: 0; background: transparent; padding: 3px 5px; min-height: 24px; font-size: 12px; text-align: left; color: var(--text-muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.35; min-width: 0; overflow-wrap: anywhere; }
+.daynote-cell { border: 0; border-left: 1px solid var(--border); border-radius: 0; background: transparent; padding: 3px 5px; min-height: 24px; font-size: 12px; text-align: left; color: var(--text-muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.35; min-width: 0; overflow-wrap: anywhere;
+  max-height: calc(2.7em + 6px); /* never taller than two lines, even where line-clamp is ignored */ }
 .daynote-cell:not(.has) { text-align: center; opacity: .35; }
 .daynote-cell:hover { background: var(--surface); opacity: 1; }
 .daynote-cell.has { color: var(--text); background: color-mix(in srgb, var(--accent) 9%, transparent); }
@@ -710,7 +724,15 @@ button:active:not(:disabled) { transform: scale(.97); }
   .day-head b { font-size: 16px; width: 28px; height: 28px; }
   .cal-allday { max-height: 72px; }
   .cal-grid { grid-template-columns: 40px repeat(var(--days, 7), minmax(0, 1fr)) !important; }
-  .day-note { padding-left: 10px; }
+  /* Phone: day notes stay small. Week: just 📝 (or +) per day, tap opens the note.
+     Day: two lines; the field grows only while you type in it. */
+  .day-note { padding: 4px 8px 6px; }
+  .day-note-head { margin-bottom: 2px; font-size: 12px; }
+  .day-note-text { max-height: calc(2.9em + 12px); font-size: 14px; padding: 5px 9px; }
+  .day-note-text:focus { max-height: 35vh; }
+  .daynote-cell { font-size: 0; text-align: center; min-height: 22px; max-height: 22px; padding: 2px 0; }
+  .daynote-cell::before { content: "+"; font-size: 12px; }
+  .daynote-cell.has::before { content: "📝"; font-size: 12px; }
   .month-note { opacity: .5; }
   .cal-grid-head, .cal-allday, .cal-daynotes { grid-template-columns: 40px repeat(var(--days, 7), minmax(0, 1fr)) !important; }
   .hour-label { font-size: 10px; right: 4px; }

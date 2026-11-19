@@ -414,12 +414,14 @@ function renderTree() {
     }
     return node;
   };
-  for (const n of [...notes, ...vault.attachments()]) folderOf(n.path.split('/').slice(0, -1)).notes.push(n);
+  // The "Вложения" folder (pictures and files) can be hidden in the settings.
+  const attachments = showAttachDir() ? vault.attachments() : vault.attachments().filter(a => !a.path.startsWith(ATTACH_DIR + '/'));
+  for (const n of [...notes, ...attachments]) folderOf(n.path.split('/').slice(0, -1)).notes.push(n);
   for (const f of vault.folderConf().folders) folderOf(f.split('/')); // empty folders made by hand
   const chevron = () => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 12 12'); s.classList.add('chev'); s.innerHTML = '<path d="M4 2.5l3.5 3.5L4 9.5" fill="none" stroke="currentColor" stroke-width="1.5"/>'; return s; };
   const draw = (node, prefix, parent) => {
     const dir = prefix.replace(/\/$/, '');
-    const folderNames = vault.sortNames(dir, [...node.folders.keys()]);
+    const folderNames = sortFolders(dir, [...node.folders.keys()]);
     for (const [name, child] of folderNames.map(n => [n, node.folders.get(n)])) {
       const path = prefix + name;
       const open = !collapsed.has(path);
@@ -445,11 +447,11 @@ function renderTree() {
         prefs.set('collapsed', [...collapsed]);
         renderTree();
       });
-      if (path !== ATTACH_DIR) {
-        b.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); folderMenu(path, e.clientX, e.clientY); });
-        Object.assign(b.dataset, { kind: 'folder', path });
-        b.draggable = true;
-      }
+      const menu = (x, y) => (path === ATTACH_DIR ? attachMenu(x, y) : folderMenu(path, x, y));
+      b.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); menu(e.clientX, e.clientY); });
+      if (touchScreen()) b.append(rowMore(menu));
+      Object.assign(b.dataset, { kind: 'folder', path });
+      b.draggable = true;
       parent.append(b, kids);
       draw(child, path + '/', kids);
     }
@@ -464,6 +466,7 @@ function renderTree() {
       b.addEventListener('click', () => navigate(note ? noteHash(n.path) : fileHash(n.path)));
       if (note) {
         b.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); noteMenu(n.path, e.clientX, e.clientY); });
+        if (touchScreen()) b.append(rowMore((x, y) => noteMenu(n.path, x, y)));
         Object.assign(b.dataset, { kind: 'note', path: n.path });
         b.draggable = true;
       }
@@ -481,10 +484,11 @@ function newFolder(parentDir = '') {
   for (let i = 1; ; i++) { path = (parentDir ? parentDir + '/' : '') + 'Новая папка' + (i > 1 ? ' ' + i : ''); if (!taken.has(path.toLowerCase())) break; }
   vault.createFolder(path);
   if (parentDir) { collapsed.delete(parentDir); prefs.set('collapsed', [...collapsed]); }
-  renamingFolder = path;
   openDrawer();
-  renderTree();
   scheduleSync();
+  if (touchScreen()) { renderTree(); renameFolderAsk(path); return; } // phone: the name is typed in a small window
+  renamingFolder = path;
+  renderTree();
 }
 function renameFolder(path, typed) {
   const name = cleanTitle(String(typed).replace(/\//g, ' '));
@@ -503,10 +507,61 @@ function moveFolder(from, to) {
 }
 
 // ---------- Moving notes and folders (drag and drop, or the menu) ----------
+// ---------- Phones: "⋯" on rows instead of right click, names typed in a small window ----------
+const touchScreen = () => matchMedia('(hover: none)').matches;
+// A "⋯" at the right of a row in the notes list; opens the same menu as a right click.
+function rowMore(open) {
+  const m = el('span', { className: 'row-more', role: 'button', 'aria-label': 'Меню', textContent: '⋯' });
+  m.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); const r = m.getBoundingClientRect(); open(r.left, r.bottom + 4); });
+  return m;
+}
+// A small window with one text field. Resolves with the text, or null when cancelled.
+function askText(title, value = '', okText = 'Сохранить') {
+  return new Promise(resolve => {
+    const input = el('input', { className: 'ask-input', value, autocomplete: 'off', 'aria-label': title });
+    const done = v => { box.remove(); resolve(v); };
+    const ok = el('button', { type: 'button', className: 'primary', textContent: okText });
+    const cancel = el('button', { type: 'button', textContent: 'Отмена' });
+    ok.addEventListener('click', () => done(input.value));
+    cancel.addEventListener('click', () => done(null));
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') done(input.value); else if (e.key === 'Escape') done(null); });
+    const box = el('div', { className: 'ask-overlay' }, el('div', { className: 'ask-box', role: 'dialog', 'aria-label': title },
+      el('b', { textContent: title }), input, el('div', { className: 'ask-row' }, cancel, ok)));
+    box.addEventListener('pointerdown', e => { if (e.target === box) done(null); });
+    document.body.append(box);
+    requestAnimationFrame(() => { input.focus(); input.select(); });
+  });
+}
+async function renameFolderAsk(path) {
+  if (!touchScreen()) { renamingFolder = path; renderTree(); return; } // on a computer: right in the list
+  const v = await askText('Новое название папки', path.split('/').pop());
+  if (v !== null) renameFolder(path, v);
+}
+
+// ---------- The "Вложения" folder ----------
+const showAttachDir = () => prefs.get('showAttach', true);
+// Folders of one level in the hand-made order; "Вложения" goes first until it is moved.
+function sortFolders(dir, names) {
+  const sorted = vault.sortNames(dir, names);
+  if (dir === '' && sorted.includes(ATTACH_DIR) && !(vault.folderConf().order[''] || []).includes(ATTACH_DIR)) return [ATTACH_DIR, ...sorted.filter(n => n !== ATTACH_DIR)];
+  return sorted;
+}
+function attachMenu(x, y) {
+  showMenu([
+    { label: 'Выше', icon: '↑', run: () => moveStep('folder', ATTACH_DIR, -1) },
+    { label: 'Ниже', icon: '↓', run: () => moveStep('folder', ATTACH_DIR, 1) },
+    'sep',
+    { label: 'Скрыть папку «Вложения»', run: () => { prefs.set('showAttach', false); renderTree(); toast('Папка «Вложения» скрыта. Вернуть её можно в Настройках → «Оформление».', 7000); } },
+  ], x, y);
+}
+
 // Names in a folder, as shown: kind 'folder' or 'note'.
 function groupNames(dir, kind) {
   if (kind === 'note') return vault.sortNames(dir, vault.notes().filter(n => dirname(n.path) === dir).map(n => filename(n.path)));
-  return vault.sortNames(dir, vault.folders().filter(f => dirname(f) === dir).map(f => f.split('/').pop()));
+  const names = vault.folders().filter(f => dirname(f) === dir).map(f => f.split('/').pop());
+  // "Вложения" takes part in the top-level order when it is shown.
+  if (dir === '' && showAttachDir() && vault.attachments().some(a => a.path.startsWith(ATTACH_DIR + '/'))) names.push(ATTACH_DIR);
+  return sortFolders(dir, names);
 }
 // Moves a note or folder into newDir ('' = top level). ref = { name, after }: put it next to that item.
 function moveItem(kind, path, newDir, ref = null) {
@@ -514,6 +569,9 @@ function moveItem(kind, path, newDir, ref = null) {
   const oldDir = dirname(path);
   const target = (newDir ? newDir + '/' : '') + name;
   if (kind === 'folder' && (newDir === path || newDir.startsWith(path + '/'))) { toast('Папку нельзя положить в саму себя.'); return; }
+  // Pictures and files are looked up in "Вложения": it stays at the top level and holds only them.
+  if (path === ATTACH_DIR && newDir !== '') { toast('Папку «Вложения» можно только переставлять по списку: картинки и файлы программа ищет именно в ней.', 6000); renderTree(); return; }
+  if (newDir === ATTACH_DIR || newDir.startsWith(ATTACH_DIR + '/')) { toast('В папке «Вложения» хранятся только картинки и файлы.', 5000); renderTree(); return; }
   try {
     if (target !== path) {
       if (kind === 'note') {
@@ -584,7 +642,7 @@ function folderMenu(path, x, y) {
     { label: 'Новая заметка', icon: '+', run: () => newNote('Без названия', path) },
     { label: 'Новая папка', icon: '📁', run: () => newFolder(path) },
     'sep',
-    { label: 'Переименовать', run: () => { renamingFolder = path; renderTree(); } },
+    { label: 'Переименовать', run: () => renameFolderAsk(path) },
     { label: 'Переместить в', icon: '↪', disabled: !moveTargets('folder', path).length, sub: moveTargets('folder', path) },
     { label: 'Выше', icon: '↑', run: () => moveStep('folder', path, -1) },
     { label: 'Ниже', icon: '↓', run: () => moveStep('folder', path, 1) },
@@ -990,6 +1048,7 @@ function showSettings() {
   if (ya.connected()) ya.info().then(i => { yaState.info = i; renderYa(); }).catch(() => {});
   $('folderSchemaLink').checked = vault.folderConf().schemaLink;
   $('aiMode').value = prefs.get('aiMode', 'button');
+  $('showAttach').checked = showAttachDir();
   renderThemePick();
 }
 
@@ -1131,6 +1190,7 @@ function bind() {
     tree.addEventListener('dragend', () => { drag = null; clear(); });
   }
   $('aiFind').addEventListener('click', () => { $('openGraph').classList.remove('ai-hint'); openAiPanel(); });
+  $('showAttach').addEventListener('change', e => { prefs.set('showAttach', e.target.checked); renderTree(); });
   $('themePick').addEventListener('click', e => {
     const b = e.target.closest('[data-theme-value]');
     if (!b) return;

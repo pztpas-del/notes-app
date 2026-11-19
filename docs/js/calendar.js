@@ -362,6 +362,9 @@ export class CalendarView {
     const ta = el('textarea', { className: 'day-note-text', placeholder: 'Заметка к этому дню: дела, мысли, что не забыть…', value: this.store.dayNote(key), rows: 2 });
     const state = el('span', { className: 'day-note-state' });
     const fit = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight + 2, Math.max(90, this.root.clientHeight * 0.3)) + 'px'; };
+    ta.addEventListener('focus', fit); // on phones the field is short until you start typing (app.css)
+    // Folded back: show the beginning of the note, not wherever the cursor was.
+    ta.addEventListener('blur', () => { ta.scrollTop = 0; });
     let timer = null;
     const save = () => { clearTimeout(timer); this.store.saveDayNote(key, ta.value); state.textContent = ta.value.trim() ? 'Сохранено' : ''; };
     ta.addEventListener('input', () => { fit(); state.textContent = ''; clearTimeout(timer); timer = setTimeout(save, 600); });
