@@ -119,18 +119,23 @@ export class SchemaView {
       : el('div', { className: 'schema-tools' },
         btn('+ Заметки', 'Добавить на схему существующие заметки и папки', () => this.togglePanel()),
         btn('Новая заметка', 'Создать заметку прямо на схеме', () => this.askName(null, null)),
+        btn('+ Блок', 'Блок с любой подписью: он есть только на схеме, заметка не создаётся', () => this.askName(null, null, 'label')),
         btn('Выровнять', 'Разложить все блоки по уровням заново', () => this.relayout()),
         btn('Вписать', 'Показать схему целиком', () => this.smooth(() => this.fit())));
     this.notice = el('div', { className: 'schema-notice', hidden: true });
     this.selBar = el('div', { className: 'schema-selbar', hidden: true });
     this.empty = el('div', { className: 'schema-empty' },
       el('b', { textContent: 'Схема пока пустая' }),
-      el('span', { textContent: this.compact ? 'Нажмите «Открыть целиком», чтобы добавить заметки и связи.' : 'Добавьте заметки кнопкой «+ Заметки» или создайте новую. Чтобы связать блоки, потяните за кружок внизу блока к другому блоку. Если отпустить на пустом месте, появится новая заметка ниже.' }));
+      el('span', { textContent: this.compact ? 'Нажмите «Открыть целиком», чтобы добавить заметки и связи.' : 'Добавьте заметки кнопкой «+ Заметки» или создайте новую. «+ Блок» — блок с любой подписью без заметки. Чтобы связать блоки, потяните за кружок внизу блока к другому блоку. Если отпустить на пустом месте, появится новая заметка ниже.' }));
     this.panel = el('div', { className: 'schema-panel', hidden: true });
     this.nameBox = el('form', { className: 'schema-name', hidden: true });
     this.nameInput = el('input', { placeholder: 'Название заметки', autocomplete: 'off' });
-    this.nameBox.append(this.nameInput, el('button', { type: 'submit', className: 'primary', textContent: 'Создать' }));
-    this.nameBox.addEventListener('submit', e => { e.preventDefault(); this.commitName(); });
+    this.nameOk = el('button', { type: 'submit', className: 'primary', textContent: 'Создать' });
+    // When pulling an arrow to an empty spot: a plain block instead of a note.
+    this.nameLabel = el('button', { type: 'submit', textContent: 'Только блок', title: 'Блок с этой подписью без заметки' });
+    this.nameLabel.dataset.label = '1';
+    this.nameBox.append(this.nameInput, this.nameOk, this.nameLabel);
+    this.nameBox.addEventListener('submit', e => { e.preventDefault(); this.commitName(Boolean(e.submitter?.dataset.label)); });
     this.nameInput.addEventListener('keydown', e => { if (e.key === 'Escape') this.cancelName(); });
     this.root.append(this.stage, this.tools, this.selBar, this.empty, this.panel, this.nameBox, this.notice);
     this.bindPointer();
@@ -166,6 +171,21 @@ export class SchemaView {
     this.render();
     this.tween(prev);
     return n;
+  }
+  // A plain block: only a caption, no note behind it.
+  addLabel(text, { parent = null } = {}) {
+    const prev = this.snapshot();
+    const n = { id: newId(), text, x: 0, y: 0, pinned: false };
+    this.s.nodes.push(n);
+    if (parent) this.connect(parent, n.id, true);
+    this.autoPlace(); this.save(); this.render(); this.tween(prev);
+    return n;
+  }
+  setLabel(id, text) {
+    const n = this.node(id);
+    if (!n || n.text === undefined || n.text === text) return;
+    n.text = text;
+    this.save(); this.render();
   }
   // A folder block; it goes under its parent folder or above its subfolders if those are on the schema.
   addFolder(dir) {
@@ -215,7 +235,8 @@ export class SchemaView {
     for (const n of this.s.nodes) n.pinned = false;
     this.autoPlace(); this.save(); this.render(); this.tween(prev); this.smooth(() => this.fit());
   }
-  title(n) { return !n ? '' : n.folder !== undefined ? n.folder.split('/').pop() : basename(n.file); }
+  title(n) { return !n ? '' : n.folder !== undefined ? n.folder.split('/').pop() : n.text !== undefined ? n.text : basename(n.file); }
+  isLabel(n) { return Boolean(n) && n.text !== undefined; }
 
   // ---------- Showing ----------
   show(focusPath, { autoAdd = true } = {}) {
@@ -318,6 +339,16 @@ export class SchemaView {
   render() {
     this.blocks.replaceChildren();
     for (const n of this.s.nodes) {
+      if (this.isLabel(n)) {
+        const b = el('div', { className: 'sblock label' + (this.sel?.type === 'node' && this.sel.id === n.id ? ' selected' : ''), title: n.text },
+          el('div', { className: 'sblock-text', textContent: n.text }),
+          el('div', { className: 'sblock-handle', title: 'Потяните к другому блоку, чтобы связать' }));
+        b.dataset.id = n.id;
+        b.style.left = (n.x - W / 2) + 'px';
+        b.style.top = n.y + 'px';
+        this.blocks.append(b);
+        continue;
+      }
       const isFolder = n.folder !== undefined;
       const note = isFolder ? null : this.vault.get(n.file);
       const count = isFolder ? this.vault.notesIn(n.folder).length : 0;
@@ -363,6 +394,12 @@ export class SchemaView {
       const n = this.node(this.sel.id);
       if (!n) { bar.hidden = true; return; }
       if (!this.compact) bar.append(el('span', { className: 'schema-selname', textContent: this.title(n) }));
+      if (this.isLabel(n)) {
+        bar.append(btn('Изменить подпись', () => this.askName(n.id, null, 'edit'), 'primary'),
+          btn('Добавить ниже', () => this.askName(n.id, null)), btn('Удалить блок', () => this.removeSelected(), 'danger-text'));
+        bar.hidden = false;
+        return;
+      }
       if (n.file && this.vault.get(n.file) && !(this.compact && n.file === this.focusPath)) bar.append(btn('Открыть', () => this.openNote(n.file), 'primary'));
       bar.append(btn(n.folder !== undefined ? 'Новая заметка в папке' : 'Добавить ниже', () => this.askName(n.id, null)), btn('Убрать со схемы', () => this.removeSelected(), 'danger-text'));
     } else {
@@ -423,23 +460,41 @@ export class SchemaView {
   }
 
   // ---------- New note right on the schema ----------
-  askName(parentId, at) {
+  // mode: 'note' (new note, or a plain block via «Только блок»), 'label' (new plain block),
+  // 'edit' (change the caption of the plain block parentId).
+  askName(parentId, at, mode = 'note') {
     this.panel.hidden = true;
     this.pendingParent = parentId;
+    this.nameMode = mode;
     const r = this.root.getBoundingClientRect();
-    let left = r.width / 2 - 150, top = 70;
-    if (at) { left = Math.min(Math.max(8, at.x - 150), r.width - 308); top = Math.min(Math.max(60, at.y - 20), r.height - 60); }
+    let left = Math.max(8, r.width / 2 - 170), top = 70;
+    if (at) { left = Math.max(8, Math.min(at.x - 170, r.width - 348)); top = Math.min(Math.max(60, at.y - 20), r.height - 60); }
     Object.assign(this.nameBox.style, { left: left + 'px', top: top + 'px' });
     this.nameBox.hidden = false;
-    this.nameInput.value = '';
-    this.nameInput.placeholder = parentId ? `Новая заметка ниже «${this.title(this.node(parentId))}»` : 'Название новой заметки';
+    this.nameInput.value = mode === 'edit' ? this.title(this.node(parentId)) : '';
+    this.nameInput.placeholder = mode !== 'note' ? 'Подпись блока' : parentId ? `Новая заметка ниже «${this.title(this.node(parentId))}»` : 'Название новой заметки';
+    this.nameOk.textContent = mode === 'note' ? 'Заметка' : mode === 'label' ? 'Создать' : 'Сохранить';
+    this.nameOk.title = mode === 'note' ? 'Создать заметку с этим названием' : '';
+    this.nameLabel.hidden = mode !== 'note';
     this.nameInput.focus();
+    if (mode === 'edit') this.nameInput.select();
   }
   cancelName() { this.nameBox.hidden = true; this.pendingParent = null; }
-  commitName() {
+  commitName(asLabel = false) {
+    const parent = this.pendingParent, mode = this.nameMode;
+    if (asLabel || mode !== 'note') {
+      const text = this.nameInput.value.replace(/\s+/g, ' ').trim();
+      if (!text) { this.nameInput.focus(); return; }
+      this.cancelName();
+      if (mode === 'edit') { this.setLabel(parent, text); return; }
+      const n = this.addLabel(text, { parent });
+      this.sel = { type: 'node', id: n.id };
+      this.render();
+      this.smooth(() => this.centerOn(n, true));
+      return;
+    }
     const name = cleanTitle(this.nameInput.value);
     if (!name) { this.nameInput.focus(); return; }
-    const parent = this.pendingParent;
     // "Добавить ниже" on a folder makes the note inside that folder.
     const dir = this.node(parent)?.folder;
     let path = dir !== undefined ? null : this.vault.findPath(name + '.md') || this.vault.resolve(name);
@@ -569,6 +624,7 @@ export class SchemaView {
       if (g.type === 'drag') {
         const n = this.node(g.id);
         if (g.moved) { n.pinned = true; this.save(); this.render(); }
+        else if (this.sel?.type === 'node' && this.sel.id === g.id && e.pointerType !== 'mouse' && this.isLabel(n)) this.askName(n.id, null, 'edit');
         else if (this.sel?.type === 'node' && this.sel.id === g.id && e.pointerType !== 'mouse' && n.file) this.openNote(n.file);
         else this.select({ type: 'node', id: g.id });
       }
@@ -585,7 +641,8 @@ export class SchemaView {
       const block = e.target.closest('.sblock');
       if (!block) return;
       const n = this.node(block.dataset.id);
-      if (n && this.vault.get(n.file)) this.openNote(n.file);
+      if (this.isLabel(n)) this.askName(n.id, null, 'edit');
+      else if (n?.file && this.vault.get(n.file)) this.openNote(n.file);
     });
     root.addEventListener('wheel', e => {
       if (e.target.closest('.schema-panel')) return;
@@ -596,7 +653,7 @@ export class SchemaView {
     document.addEventListener('keydown', e => {
       if (!this.visible || e.target.closest('input, textarea, [contenteditable="true"]')) return;
       if ((e.key === 'Delete' || e.key === 'Backspace') && this.sel) { e.preventDefault(); this.removeSelected(); }
-      else if (e.key === 'Enter' && this.sel?.type === 'node') { const n = this.node(this.sel.id); if (n && this.vault.get(n.file)) this.openNote(n.file); }
+      else if (e.key === 'Enter' && this.sel?.type === 'node') { const n = this.node(this.sel.id); if (this.isLabel(n)) { e.preventDefault(); this.askName(n.id, null, 'edit'); } else if (n?.file && this.vault.get(n.file)) this.openNote(n.file); }
       else if (e.key === 'Escape') { this.select(null); this.cancelName(); this.panel.hidden = true; }
     });
   }

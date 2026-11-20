@@ -28,12 +28,13 @@ export const FOLDERS_PATH = 'Настройки папок.json';
 
 // Parses the flowchart file into nodes (one per note or folder) and parent→child edges.
 // A folder is a text node with an extra "folder" field, so other canvas apps show it as text.
+// Any other text node is a plain block: just a caption, it exists only on the schema.
 export function parseSchema(text) {
   try {
     const j = JSON.parse(text || '{}');
     const nodes = (Array.isArray(j.nodes) ? j.nodes : [])
-      .filter(n => n && n.id && ((n.type === 'file' && typeof n.file === 'string') || (n.type === 'text' && typeof n.folder === 'string')))
-      .map(n => ({ id: String(n.id), ...(n.type === 'file' ? { file: n.file } : { folder: n.folder }), x: Number(n.x) || 0, y: Number(n.y) || 0, pinned: Boolean(n.pinned) }));
+      .filter(n => n && n.id && ((n.type === 'file' && typeof n.file === 'string') || (n.type === 'text' && (typeof n.folder === 'string' || typeof n.text === 'string'))))
+      .map(n => ({ id: String(n.id), ...(n.type === 'file' ? { file: n.file } : typeof n.folder === 'string' ? { folder: n.folder } : { text: n.text }), x: Number(n.x) || 0, y: Number(n.y) || 0, pinned: Boolean(n.pinned) }));
     const ids = new Set(nodes.map(n => n.id));
     const edges = (Array.isArray(j.edges) ? j.edges : [])
       .filter(e => e && ids.has(e.fromNode) && ids.has(e.toNode) && e.fromNode !== e.toNode)
@@ -45,7 +46,7 @@ export function parseSchema(text) {
 }
 export function serializeSchema(s) {
   return JSON.stringify({
-    nodes: s.nodes.map(n => ({ id: n.id, ...(n.folder !== undefined ? { type: 'text', text: '📁 ' + n.folder.split('/').pop(), folder: n.folder } : { type: 'file', file: n.file }),
+    nodes: s.nodes.map(n => ({ id: n.id, ...(n.folder !== undefined ? { type: 'text', text: '📁 ' + n.folder.split('/').pop(), folder: n.folder } : n.text !== undefined ? { type: 'text', text: n.text } : { type: 'file', file: n.file }),
       x: Math.round(n.x), y: Math.round(n.y), width: 200, height: 64, ...(n.pinned ? { pinned: true } : {}) })),
     edges: s.edges.map(e => ({ id: e.id, fromNode: e.fromNode, fromSide: 'bottom', toNode: e.toNode, toSide: 'top', toEnd: 'arrow' })),
   }, null, '\t') + '\n';
