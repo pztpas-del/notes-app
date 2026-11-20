@@ -12,6 +12,7 @@ import { NativeReminders, isNativeApp } from './native.js';
 import { openEditMenuAt, showMenu } from './editmenu.js';
 import { LinkFinder, addSeeAlso, DEFAULT_MIN } from './links-ai.js';
 import { GoalsView } from './goals.js';
+import { initFind } from './find.js';
 
 const $ = id => document.getElementById(id);
 const prefs = {
@@ -63,6 +64,8 @@ const ed = createEditor($('editor'), {
   },
   saveFiles: files => saveFiles(files),
 });
+// Search inside the note (magnifier button on a phone).
+const finder2 = initFind({ ed, isReading: () => mode === 'read', preview: $('preview') });
 window.__notes = { vault, sync, ed }; // handy for debugging from the browser console
 
 // ---------- Views and routing ----------
@@ -74,7 +77,8 @@ function showView(id, crumb) {
   for (const v of ['noteView', 'fileView', 'graphView', 'schemaView', 'calendarView', 'goalsView', 'settingsView', 'emptyView']) $(v).hidden = v !== id;
   if (id !== 'goalsView') goals.hide();
   $('openGoals').classList.toggle('on', id === 'goalsView');
-  $('modeBtn').hidden = $('moreBtn').hidden = $('attachBtn').hidden = $('panelBtn').hidden = id !== 'noteView';
+  $('modeBtn').hidden = $('moreBtn').hidden = $('attachBtn').hidden = $('panelBtn').hidden = $('findBtn').hidden = id !== 'noteView';
+  if (id !== 'noteView') finder2?.close();
   $('formatBtn').hidden = id !== 'noteView' || mode === 'read';
   if (id !== 'noteView') current = null;
   if (id !== 'fileView') currentFile = null;
@@ -135,7 +139,7 @@ function renderNote(switching = false) {
   const title = $('title');
   if (document.activeElement !== title || switching) title.value = basename(current);
   $('crumb').textContent = dirname(current).split('/').join(' / ');
-  if (switching) { ed.load(note.content); linkSig = vaultSignature(); }
+  if (switching) { finder2?.close(); ed.load(note.content); linkSig = vaultSignature(); }
   else {
     ed.setDoc(note.content);
     const sig = vaultSignature();
@@ -153,6 +157,7 @@ function renderNote(switching = false) {
     ? '<svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/></svg>'
     : '<svg viewBox="0 0 24 24"><path d="M3 5.5C5.5 4 9 4 12 6c3-2 6.5-2 9-.5V19c-2.5-1.5-6-1.5-9 .5-3-2-6.5-2-9-.5z"/><path d="M12 6v13.5"/></svg>';
   renderBacklinks();
+  finder2?.refresh();
 }
 
 function renderBacklinks() {

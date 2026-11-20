@@ -60,6 +60,8 @@
         <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
       <span id="crumb" class="crumb"></span>
       <span class="spacer"></span>
+      <button class="icon phone-only" id="findBtn" hidden title="Поиск по заметке" aria-label="Поиск по заметке" aria-expanded="false" aria-controls="findBar">
+        <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/></svg></button>
       <button class="icon text-icon" id="formatBtn" hidden title="Форматирование: шрифт, абзац, по центру" aria-label="Форматирование" aria-haspopup="true">Аа</button>
       <button class="icon" id="attachBtn" hidden title="Вставить картинку или файл" aria-label="Вставить картинку или файл">
         <svg viewBox="0 0 24 24"><path d="M20 11.5l-7.8 7.8a5 5 0 01-7.1-7.1l8.5-8.5a3.3 3.3 0 014.7 4.7l-8.5 8.5a1.7 1.7 0 01-2.4-2.4l7.8-7.8"/></svg></button>
@@ -73,6 +75,16 @@
         <div id="moreMenu" class="menu" hidden></div>
       </div>
     </header>
+    <div id="findBar" class="find-bar" role="search" hidden>
+      <input id="findInput" type="search" placeholder="Найти в заметке" aria-label="Найти в заметке" autocomplete="off" enterkeyhint="search">
+      <span id="findCount" class="find-count" aria-live="polite"></span>
+      <button class="icon" id="findPrev" type="button" title="Предыдущее" aria-label="Предыдущее совпадение">
+        <svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button>
+      <button class="icon" id="findNext" type="button" title="Следующее" aria-label="Следующее совпадение">
+        <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
+      <button class="icon" id="findClose" type="button" title="Закрыть поиск" aria-label="Закрыть поиск">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
 
     <div class="main-row">
     <section id="noteView" class="view" hidden>

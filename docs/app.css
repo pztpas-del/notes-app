@@ -744,3 +744,18 @@ button:active:not(:disabled) { transform: scale(.97); }
   .cal-scroll { padding-bottom: 120px; }
   .cal-toolbar .primary { position: absolute; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 15; border-radius: 22px; padding: 11px 18px; font-size: 15px; box-shadow: 0 8px 24px rgb(0 0 0 / .3); }
 }
+
+/* Search inside the note: the magnifier button is for phones (on a computer Ctrl+F does it). */
+@media (min-width: 641px) { .phone-only { display: none !important; } }
+#findBtn[aria-expanded="true"] { color: var(--accent); }
+.find-bar { display: flex; align-items: center; gap: 2px; padding: 6px 8px 6px 10px; border-bottom: 1px solid var(--border); background: var(--bg); }
+.find-bar:not([hidden]) { animation: find-in .18s var(--ease); }
+@keyframes find-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .find-bar:not([hidden]) { animation: none; } }
+.find-bar input { flex: 1; min-width: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 7px 10px; font-size: 16px; }
+.find-bar input:focus { outline: none; border-color: var(--accent); }
+.find-count { font-size: 13px; color: var(--text-muted); white-space: nowrap; padding: 0 6px; font-variant-numeric: tabular-nums; }
+.find-count.none { color: var(--danger); }
+.find-bar button.icon:disabled { opacity: .35; }
+mark.find-hit { background: var(--mark); color: inherit; border-radius: 2px; }
+mark.find-hit.cur { background: var(--accent); color: var(--bg); }

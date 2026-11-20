@@ -2,7 +2,7 @@
 // marks (#, **, [[ ]] …) are hidden everywhere except on the lines being edited,
 // links and checkboxes are clickable, and images are shown in place.
 import {
-  EditorState, EditorView, ViewPlugin, Decoration, WidgetType, Annotation, StateEffect, Transaction, keymap,
+  EditorState, EditorView, ViewPlugin, Decoration, WidgetType, Annotation, StateEffect, StateField, Transaction, keymap,
   drawSelection, placeholder, dropCursor, defaultKeymap, history, historyKeymap, indentWithTab,
   markdown, markdownLanguage, markdownKeymap, syntaxTree, indentUnit,
   autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap, search, searchKeymap,
@@ -10,6 +10,21 @@ import {
 import { attachEditMenu, installMenuDismiss } from './editmenu.js';
 
 const fromOutside = Annotation.define();
+
+// ---------- Search inside the note (the phone's magnifier button) ----------
+// Matches are found in app code and shown here as highlights; ё and е count as the same letter.
+export const findNorm = t => t.toLowerCase().replace(/ё/g, 'е');
+const setFind = StateEffect.define();
+const findField = StateField.define({
+  create: () => Decoration.none,
+  update(deco, tr) {
+    deco = deco.map(tr.changes);
+    for (const e of tr.effects) if (e.is(setFind)) deco = e.value;
+    return deco;
+  },
+  provide: f => EditorView.decorations.from(f),
+});
+const findMark = Decoration.mark({ class: 'cm-find' }), findCur = Decoration.mark({ class: 'cm-find cm-find-cur' });
 const redraw = StateEffect.define();
 const IMAGE_RE = /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i;
 const CENTER_RE = /^(\s*(?:#{1,6}\s+|>\s?|[-*+]\s+(?:\[[ xX]\]\s+)?|\d+[.)]\s+)?)<center>(.*)<\/center>\s*$/;
@@ -327,6 +342,8 @@ const theme = EditorView.theme({
   '.cm-panels': { background: 'var(--side)', color: 'var(--text)', borderColor: 'var(--border)' },
   '.cm-search input, .cm-search button': { font: 'inherit', fontSize: '14px' },
   '.cm-searchMatch': { backgroundColor: 'var(--mark)' },
+  '.cm-find': { backgroundColor: 'var(--mark)', borderRadius: '2px' },
+  '.cm-find-cur': { backgroundColor: 'var(--accent)', color: 'var(--bg)' },
 });
 
 // ---------- Public API ----------
@@ -342,6 +359,7 @@ export function createEditor(parent, opts) {
         closeBrackets(),
         autocompletion({ override: [linkCompletion(opts)], icons: false, activateOnTyping: true }),
         search({ top: true }),
+        findField,
         placeholder('Начните писать. [[Название]] создаёт ссылку на другую заметку, #тег добавляет тег.'),
         keymap.of([...closeBracketsKeymap, ...completionKeymap, ...markdownKeymap, ...searchKeymap, ...historyKeymap, ...defaultKeymap, indentWithTab]),
         livePreview(opts),
@@ -457,5 +475,17 @@ export function createEditor(parent, opts) {
     insertFiles: files => insertFiles(view, files, view.state.selection.main.from),
     // Links or files changed elsewhere: redraw link colours and images.
     refresh() { view.dispatch({ effects: redraw.of(null) }); },
+    // Highlights every match of query and scrolls to match number index; returns how many there are.
+    find(query, index = 0, scroll = true) {
+      const q = findNorm(query), hits = [];
+      if (q) {
+        const low = findNorm(view.state.doc.toString());
+        for (let i = low.indexOf(q); i >= 0 && hits.length < 5000; i = low.indexOf(q, i + q.length)) hits.push(i);
+      }
+      const cur = hits.length ? ((index % hits.length) + hits.length) % hits.length : -1;
+      const deco = Decoration.set(hits.map((h, i) => (i === cur ? findCur : findMark).range(h, h + q.length)));
+      view.dispatch({ effects: cur >= 0 && scroll ? [setFind.of(deco), EditorView.scrollIntoView(hits[cur], { y: 'center' })] : [setFind.of(deco)] });
+      return { count: hits.length, index: cur };
+    },
   };
 }
