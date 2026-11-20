@@ -2,7 +2,7 @@
 // marks (#, **, [[ ]] …) are hidden everywhere except on the lines being edited,
 // links and checkboxes are clickable, and images are shown in place.
 import {
-  EditorState, EditorView, ViewPlugin, Decoration, WidgetType, Annotation, StateEffect, StateField, Transaction, keymap,
+  EditorState, EditorView, EditorSelection, ViewPlugin, Decoration, WidgetType, Annotation, StateEffect, StateField, Transaction, keymap, Prec,
   drawSelection, placeholder, dropCursor, defaultKeymap, history, historyKeymap, indentWithTab,
   markdown, markdownLanguage, markdownKeymap, syntaxTree, indentUnit,
   autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap, search, searchKeymap,
@@ -117,21 +117,31 @@ function activeLineNumbers(view) {
   return set;
 }
 
+// Clean mode (a setting): marks stay hidden on the line being edited too. Only a link
+// or image the cursor is inside shows its source, so it can still be typed and fixed.
 function buildDecorations(view, opts) {
   const { state } = view;
   const doc = state.doc;
-  const active = activeLineNumbers(view);
+  const clean = Boolean(opts.clean?.());
+  const active = clean ? new Set() : activeLineNumbers(view);
+  const focused = view.hasFocus || view.contentDOM.contains(document.activeElement);
   const isActive = (from, to = from) => {
     const a = doc.lineAt(from).number, b = doc.lineAt(to).number;
     for (let n = a; n <= b; n++) if (active.has(n)) return true;
     return false;
   };
+  // For links and images: in clean mode only when the cursor is strictly inside them.
+  const isEditing = (from, to) => clean ? focused && state.selection.ranges.some(r => r.from > from && r.to < to) : isActive(from, to);
   const out = [];
-  const hide = (from, to) => { if (to > from) out.push(Decoration.replace({}).range(from, to)); };
+  const hidden = []; // { from, to, kind: 'hide' | 'widget' | 'prefix' } — for clean-mode cursor moves and deleting
+  const hide = (from, to) => { if (to > from) { out.push(Decoration.replace({}).range(from, to)); hidden.push({ from, to, kind: 'hide' }); } };
   const mark = (from, to, cls, attrs) => { if (to > from) out.push(Decoration.mark({ class: cls, attributes: attrs }).range(from, to)); };
   const lineClass = (pos, cls) => out.push(Decoration.line({ class: cls }).range(doc.lineAt(pos).from));
   const replaced = []; // ranges already turned into widgets, so later matches skip them
-  const widget = (from, to, w) => { out.push(Decoration.replace({ widget: w }).range(from, to)); replaced.push([from, to]); };
+  const widget = (from, to, w) => {
+    out.push(Decoration.replace({ widget: w }).range(from, to)); replaced.push([from, to]);
+    hidden.push({ from, to, kind: w instanceof BulletWidget || w instanceof CheckboxWidget ? 'prefix' : 'widget' });
+  };
   const inCode = new Set(); // line numbers inside fenced code
 
   const tree = syntaxTree(state);
@@ -197,7 +207,7 @@ function buildDecorations(view, opts) {
           return;
         }
         if (n === 'Image') {
-          if (isActive(node.from)) return false;
+          if (isEditing(node.from, node.to)) return false;
           const url = node.node.getChild('URL');
           const src = url ? state.sliceDoc(url.from, url.to) : '';
           const altText = state.sliceDoc(node.from, node.to).match(/^!\[([^\]]*)\]/)?.[1] || '';
@@ -211,7 +221,7 @@ function buildDecorations(view, opts) {
           const marks = [];
           for (let ch = node.node.firstChild; ch; ch = ch.nextSibling) if (ch.name === 'LinkMark') marks.push(ch);
           if (marks.length < 2) return false;
-          if (isActive(node.from)) { mark(node.from, node.to, 'cm-link-src'); return false; }
+          if (isEditing(node.from, node.to)) { mark(node.from, node.to, 'cm-link-src'); return false; }
           hide(marks[0].from, marks[0].to);
           mark(marks[0].to, marks[1].from, 'cm-link', href ? { 'data-href': href } : undefined);
           hide(marks[1].from, node.to);
@@ -260,7 +270,7 @@ function buildDecorations(view, opts) {
       if (skip(a, b)) continue;
       const [targetPart, alias] = m[2].split('|');
       const [target, heading = ''] = targetPart.split('#');
-      if (isActive(a)) { mark(a, b, 'cm-wikilink-src'); continue; }
+      if (isEditing(a, b)) { mark(a, b, 'cm-wikilink-src'); continue; }
       if (m[1]) {
         const name = target.trim();
         const url = opts.fileUrl(name);
@@ -284,19 +294,134 @@ function buildDecorations(view, opts) {
       if (!isActive(a)) { hide(a, a + 2); hide(b - 2, b); } else { mark(a, a + 2, 'cm-syntax'); mark(b - 2, b, 'cm-syntax'); }
     }
   }
-  return Decoration.set(out, true);
+  hidden.sort((x, y) => x.from - y.from);
+  const atomic = clean ? Decoration.set(hidden.map(h => Decoration.replace({}).range(h.from, h.to)), true) : Decoration.none;
+  return { decorations: Decoration.set(out, true), hidden, atomic };
 }
 
 function livePreview(opts) {
   return ViewPlugin.fromClass(class {
-    constructor(view) { this.decorations = buildDecorations(view, opts); }
+    constructor(view) { Object.assign(this, buildDecorations(view, opts)); }
     update(u) {
       if (u.docChanged || u.viewportChanged || u.selectionSet || u.focusChanged ||
           u.transactions.some(t => t.reconfigured || t.effects.some(e => e.is(redraw)))) {
-        this.decorations = buildDecorations(u.view, opts);
+        Object.assign(this, buildDecorations(u.view, opts));
       }
     }
   }, { decorations: v => v.decorations });
+}
+
+// ---------- Clean mode: editing without visible marks ----------
+// The hidden marks can't be seen, so the cursor must never stop where typing or
+// deleting would break them: before a line's "# ", "- ", "> ", <center>, or after </center>.
+const LINE_PREFIX_RE = /^\s*(?:#{1,6}\s+|(?:>\s?)+|[-*+]\s+(?:\[[ xX]\]\s+)?|\d+[.)]\s+)?/;
+const PAIRS = ['**', '__', '~~', '==', '*', '_', '`'];
+
+function cleanTools(plugin, opts, getView) {
+  const hiddenOf = view => view?.plugin(plugin)?.hidden || [];
+  // Where text may be typed on a line: after the hidden start and before a hidden </center>.
+  const bounds = (view, line) => {
+    const hs = hiddenOf(view);
+    let start = line.from, end = line.to;
+    for (let moved = true; moved;) {
+      moved = false;
+      for (const h of hs) if (h.from === start && h.kind !== 'widget' && h.to <= line.to) { start = h.to; moved = true; }
+    }
+    if (start > line.from) start = Math.max(start, line.from + line.text.match(LINE_PREFIX_RE)[0].length);
+    if (CENTER_RE.test(line.text)) {
+      end = line.from + line.text.lastIndexOf('</center>');
+      if (start === line.from) start = line.from + line.text.match(CENTER_RE)[1].length + 8;
+    }
+    return { start: Math.min(start, end), end };
+  };
+  const centered = line => CENTER_RE.test(line.text);
+
+  // Cursor moves and clicks (no text change): keep the cursor inside the visible text.
+  const filter = EditorState.transactionFilter.of(tr => {
+    const view = getView();
+    if (!view || !opts.clean?.() || tr.docChanged || !tr.selection || tr.selection.ranges.length !== 1 || !tr.selection.main.empty) return tr;
+    const doc = tr.newDoc, pos = tr.selection.main.head, old = tr.startState.selection.main.head;
+    const line = doc.lineAt(pos), b = bounds(view, line), key = !tr.isUserEvent('select.pointer');
+    let to = pos;
+    if (pos < b.start) to = key && old === b.start && line.number > 1 && old > pos ? bounds(view, doc.line(line.number - 1)).end : b.start;
+    else if (pos > b.end) to = key && old === b.end && line.number < doc.lines && old < pos ? bounds(view, doc.line(line.number + 1)).start : b.end;
+    return to === pos ? tr : [tr, { selection: EditorSelection.cursor(to), sequential: true }];
+  });
+
+  // Joins line n with the next one: the next line loses its own "# ", "- " etc.,
+  // and if the first line is centred the joined text stays inside <center>.
+  const joinLines = (view, n) => {
+    const doc = view.state.doc, a = doc.line(n), b = doc.line(n + 1);
+    let body = b.text.slice(b.text.match(LINE_PREFIX_RE)[0].length);
+    if (centered(b)) body = b.text.match(CENTER_RE)[2];
+    const ab = bounds(view, a);
+    const insert = a.text.slice(0, ab.end - a.from) + body + a.text.slice(ab.end - a.from);
+    view.dispatch({ changes: { from: a.from, to: b.to, insert }, selection: { anchor: ab.end }, userEvent: 'delete', scrollIntoView: true });
+    return true;
+  };
+  // After deleting a character: "****" left from an emptied **bold** goes too.
+  const dropEmptyPair = (state, at) => {
+    for (const m of PAIRS) if (state.sliceDoc(at - m.length, at + m.length) === m + m) return { from: at - m.length, to: at + m.length };
+    return null;
+  };
+  const deleteAt = (view, from, to) => {
+    const after = view.state.update({ changes: { from, to } }).state;
+    const pair = dropEmptyPair(after, from); // measured after deleting; maps back to [from - n, to + n]
+    const n = pair ? from - pair.from : 0;
+    view.dispatch({ changes: { from: from - n, to: to + n }, selection: { anchor: from - n }, userEvent: 'delete', scrollIntoView: true });
+    return true;
+  };
+  const single = view => opts.clean?.() && view.state.selection.ranges.length === 1 && view.state.selection.main.empty;
+  const charBefore = (doc, p) => (/[\udc00-\udfff]/.test(doc.sliceString(p - 1, p)) ? 2 : 1);
+
+  const backspace = view => {
+    if (!single(view)) return false;
+    const { doc } = view.state, pos = view.state.selection.main.head, line = doc.lineAt(pos), b = bounds(view, line);
+    if (pos <= b.start) {
+      const pre = line.text.match(LINE_PREFIX_RE)[0];
+      // At the start of a heading, list item or quote: the line becomes plain text.
+      if (pre.length) { view.dispatch({ changes: { from: line.from, to: line.from + pre.length }, userEvent: 'delete' }); return true; }
+      if (centered(line)) { // a plain centred line: stop centring it
+        const open = line.from + line.text.match(CENTER_RE)[1].length, close = line.from + line.text.lastIndexOf('</center>');
+        view.dispatch({ changes: [{ from: open, to: open + 8 }, { from: close, to: line.to }], userEvent: 'delete' });
+        return true;
+      }
+      return line.number > 1 ? joinLines(view, line.number - 1) : true;
+    }
+    let p = pos;
+    const hs = hiddenOf(view);
+    for (let moved = true; moved;) { moved = false; for (const h of hs) if (h.to === p && h.kind === 'hide' && h.from >= b.start) { p = h.from; moved = true; } }
+    const w = hs.find(h => h.to === p && h.kind === 'widget');
+    if (w) return deleteAt(view, w.from, w.to);
+    if (p <= b.start) return true;
+    return deleteAt(view, p - charBefore(doc, p), p);
+  };
+  const del = view => {
+    if (!single(view)) return false;
+    const { doc } = view.state, pos = view.state.selection.main.head, line = doc.lineAt(pos), b = bounds(view, line);
+    if (pos >= b.end) return line.number < doc.lines ? joinLines(view, line.number) : true;
+    let p = pos;
+    const hs = hiddenOf(view);
+    for (let moved = true; moved;) { moved = false; for (const h of hs) if (h.from === p && h.kind === 'hide' && h.to <= b.end) { p = h.to; moved = true; } }
+    const w = hs.find(h => h.from === p && h.kind === 'widget');
+    if (w) return deleteAt(view, w.from, w.to);
+    if (p >= b.end) return true;
+    return deleteAt(view, p, p + (/[\ud800-\udbff]/.test(doc.sliceString(p, p + 1)) ? 2 : 1));
+  };
+  // Enter inside a centred line: both halves stay centred.
+  const enter = view => {
+    if (!single(view)) return false;
+    const pos = view.state.selection.main.head, line = view.state.doc.lineAt(pos);
+    if (!centered(line)) return false;
+    const insert = '</center>\n<center>';
+    view.dispatch({ changes: { from: pos, insert }, selection: { anchor: pos + insert.length }, userEvent: 'input', scrollIntoView: true });
+    return true;
+  };
+  return [
+    EditorView.atomicRanges.of(view => view.plugin(plugin)?.atomic || Decoration.none),
+    Prec.high(keymap.of([{ key: 'Backspace', run: backspace }, { key: 'Delete', run: del }, { key: 'Enter', run: enter }])),
+    filter,
+  ];
 }
 
 // ---------- [[ completion ----------
@@ -348,6 +473,8 @@ const theme = EditorView.theme({
 
 // ---------- Public API ----------
 export function createEditor(parent, opts) {
+  const preview = livePreview(opts);
+  let viewRef = null;
   const extensions = [
         history(),
         drawSelection(),
@@ -362,7 +489,8 @@ export function createEditor(parent, opts) {
         findField,
         placeholder('Начните писать. [[Название]] создаёт ссылку на другую заметку, #тег добавляет тег.'),
         keymap.of([...closeBracketsKeymap, ...completionKeymap, ...markdownKeymap, ...searchKeymap, ...historyKeymap, ...defaultKeymap, indentWithTab]),
-        livePreview(opts),
+        preview,
+        cleanTools(preview, opts, () => viewRef),
         theme,
         EditorView.contentAttributes.of({ spellcheck: 'true', autocapitalize: 'sentences', 'aria-label': 'Текст заметки' }),
         EditorView.updateListener.of(u => {
@@ -418,6 +546,7 @@ export function createEditor(parent, opts) {
         }),
   ];
   const view = new EditorView({ parent, state: EditorState.create({ doc: '', extensions }) });
+  viewRef = view;
   // "Insert picture, video or file" from the menu: goes exactly where the menu was opened.
   const picker = Object.assign(document.createElement('input'), { type: 'file', multiple: true, hidden: true,
     accept: 'image/*,video/*,audio/*,application/pdf,.txt,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip' });
@@ -475,6 +604,8 @@ export function createEditor(parent, opts) {
     insertFiles: files => insertFiles(view, files, view.state.selection.main.from),
     // Links or files changed elsewhere: redraw link colours and images.
     refresh() { view.dispatch({ effects: redraw.of(null) }); },
+    // The clean-mode setting changed: redraw marks (opts.clean is read on every redraw).
+    setClean() { view.dispatch({ effects: redraw.of(null) }); },
     // Highlights every match of query and scrolls to match number index; returns how many there are.
     find(query, index = 0, scroll = true) {
       const q = findNorm(query), hits = [];

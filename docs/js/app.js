@@ -41,7 +41,9 @@ let mode = prefs.get('mode', 'edit');
 const collapsed = new Set(prefs.get('collapsed', []));
 let syncState = { state: 'idle', at: null, error: '' };
 let graph = null;
+let cleanEdit = Boolean(prefs.get('cleanEdit', false));
 const ed = createEditor($('editor'), {
+  clean: () => cleanEdit,
   onChange(text) {
     if (!current) return;
     vault.write(current, text);
@@ -1054,6 +1056,7 @@ function showSettings() {
   $('folderSchemaLink').checked = vault.folderConf().schemaLink;
   $('aiMode').value = prefs.get('aiMode', 'button');
   $('showAttach').checked = showAttachDir();
+  $('cleanEdit').checked = cleanEdit;
   renderThemePick();
 }
 
@@ -1196,6 +1199,7 @@ function bind() {
   }
   $('aiFind').addEventListener('click', () => { $('openGraph').classList.remove('ai-hint'); openAiPanel(); });
   $('showAttach').addEventListener('change', e => { prefs.set('showAttach', e.target.checked); renderTree(); });
+  $('cleanEdit').addEventListener('change', e => { cleanEdit = e.target.checked; prefs.set('cleanEdit', cleanEdit); ed.setClean(); });
   $('themePick').addEventListener('click', e => {
     const b = e.target.closest('[data-theme-value]');
     if (!b) return;
